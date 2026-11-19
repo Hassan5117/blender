@@ -8689,6 +8689,54 @@ static void rna_def_scene_eevee(BlenderRNA *brna)
   RNA_def_property_override_flag(prop, PROPOVERRIDE_OVERRIDABLE_LIBRARY);
   RNA_def_property_update(prop, NC_SCENE | ND_RENDER_OPTIONS, nullptr);
 
+  /* Goo Engine: Bloom (identifiers match Goo 4.x so scripts and add-ons keep working). */
+  prop = RNA_def_property(srna, "use_bloom", PROP_BOOLEAN, PROP_NONE);
+  RNA_def_property_boolean_sdna(prop, nullptr, "flag", SCE_EEVEE_BLOOM_ENABLED);
+  RNA_def_property_ui_text(prop, "Bloom", "High brightness pixels generate a glowing effect");
+  RNA_def_property_override_flag(prop, PROPOVERRIDE_OVERRIDABLE_LIBRARY);
+  RNA_def_property_update(prop, NC_SCENE | ND_RENDER_OPTIONS, nullptr);
+
+  prop = RNA_def_property(srna, "bloom_threshold", PROP_FLOAT, PROP_FACTOR);
+  RNA_def_property_ui_text(prop, "Threshold", "Filters out pixels under this level of brightness");
+  RNA_def_property_range(prop, 0.0f, 100000.0f);
+  RNA_def_property_ui_range(prop, 0.0f, 10.0f, 1, 3);
+  RNA_def_property_override_flag(prop, PROPOVERRIDE_OVERRIDABLE_LIBRARY);
+  RNA_def_property_update(prop, NC_SCENE | ND_RENDER_OPTIONS, nullptr);
+
+  prop = RNA_def_property(srna, "bloom_color", PROP_FLOAT, PROP_COLOR);
+  RNA_def_property_array(prop, 3);
+  RNA_def_property_ui_text(prop, "Color", "Color applied to the bloom effect");
+  RNA_def_property_override_flag(prop, PROPOVERRIDE_OVERRIDABLE_LIBRARY);
+  RNA_def_property_update(prop, NC_SCENE | ND_RENDER_OPTIONS, nullptr);
+
+  prop = RNA_def_property(srna, "bloom_knee", PROP_FLOAT, PROP_FACTOR);
+  RNA_def_property_ui_text(prop, "Knee", "Makes transition between under/over-threshold gradual");
+  RNA_def_property_range(prop, 0.0f, 1.0f);
+  RNA_def_property_override_flag(prop, PROPOVERRIDE_OVERRIDABLE_LIBRARY);
+  RNA_def_property_update(prop, NC_SCENE | ND_RENDER_OPTIONS, nullptr);
+
+  prop = RNA_def_property(srna, "bloom_radius", PROP_FLOAT, PROP_FACTOR);
+  RNA_def_property_ui_text(prop, "Radius", "Bloom spread distance");
+  RNA_def_property_range(prop, 0.0f, 100.0f);
+  RNA_def_property_ui_range(prop, 0.0f, 10.0f, 1, 3);
+  RNA_def_property_override_flag(prop, PROPOVERRIDE_OVERRIDABLE_LIBRARY);
+  RNA_def_property_update(prop, NC_SCENE | ND_RENDER_OPTIONS, nullptr);
+
+  prop = RNA_def_property(srna, "bloom_clamp", PROP_FLOAT, PROP_FACTOR);
+  RNA_def_property_ui_text(
+      prop, "Clamp", "Maximum intensity a bloom pixel can have (0 to disable)");
+  RNA_def_property_range(prop, 0.0f, 100000.0f);
+  RNA_def_property_ui_range(prop, 0.0f, 1000.0f, 1, 3);
+  RNA_def_property_override_flag(prop, PROPOVERRIDE_OVERRIDABLE_LIBRARY);
+  RNA_def_property_update(prop, NC_SCENE | ND_RENDER_OPTIONS, nullptr);
+
+  prop = RNA_def_property(srna, "bloom_intensity", PROP_FLOAT, PROP_FACTOR);
+  RNA_def_property_ui_text(prop, "Intensity", "Blend factor");
+  RNA_def_property_range(prop, 0.0f, 10000.0f);
+  RNA_def_property_ui_range(prop, 0.0f, 0.1f, 1, 3);
+  RNA_def_property_override_flag(prop, PROPOVERRIDE_OVERRIDABLE_LIBRARY);
+  RNA_def_property_update(prop, NC_SCENE | ND_RENDER_OPTIONS, nullptr);
+
   prop = RNA_def_property(srna, "light_threshold", PROP_FLOAT, PROP_UNSIGNED);
   RNA_def_property_ui_text(prop,
                            "Light Threshold",

@@ -2619,7 +2619,8 @@ enum eSceneEEVEE_Flag : int {
   // SCE_EEVEE_GTAO_BENT_NORMALS = (1 << 5), /* Unused. */
   // SCE_EEVEE_GTAO_BOUNCE = (1 << 6), /* Unused. */
   // SCE_EEVEE_DOF_ENABLED = (1 << 7), /* Moved to camera->dof.flag */
-  // SCE_EEVEE_BLOOM_ENABLED = (1 << 8), /* Unused */
+  /* Goo Engine: restored (same bit as Goo 4.x / EEVEE Legacy, for file compatibility). */
+  SCE_EEVEE_BLOOM_ENABLED = (1 << 8),
   SCE_EEVEE_MOTION_BLUR_ENABLED_DEPRECATED = (1 << 9), /* Moved to scene->r.mode */
   // SCE_EEVEE_SHADOW_HIGH_BITDEPTH = (1 << 10), /* Unused. */
   SCE_EEVEE_TAA_REPROJECTION = (1 << 11),
@@ -2718,6 +2719,14 @@ struct SceneEEVEE {
 
   float overscan = 3.0f;
   float light_threshold = 0.01f;
+
+  /* Goo Engine: bloom (names match Goo 4.x / EEVEE Legacy so old files read them back). */
+  float bloom_color[3] = {1.0f, 1.0f, 1.0f};
+  float bloom_threshold = 0.8f;
+  float bloom_knee = 0.5f;
+  float bloom_intensity = 0.05f;
+  float bloom_radius = 6.5f;
+  float bloom_clamp = 0.0f;
 };
 
 struct SceneGpencil {

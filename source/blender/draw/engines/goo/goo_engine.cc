@@ -133,8 +133,9 @@ static void render_to_image(RenderEngine *engine, RenderLayer *layer, const rcti
   manager.end_sync();
 
   DRW_submission_start();
+  DefaultTextureList *dtxl = draw_ctx->viewport_texture_list_get();
   DefaultFramebufferList *dfbl = draw_ctx->viewport_framebuffer_list_get();
-  instance.draw_to(manager, draw::View::default_get(), dfbl->default_fb);
+  instance.draw_to(manager, draw::View::default_get(), dtxl->color, dtxl->depth);
   DRW_submission_end();
 
   const char *viewname = RE_GetActiveRenderView(engine->re);

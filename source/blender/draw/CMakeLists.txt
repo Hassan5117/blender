@@ -91,6 +91,7 @@ set(SRC
   engines/image/image_drawing_mode_image_space.cc
   engines/image/image_drawing_mode_screen_space.cc
   engines/image/image_engine.cc
+  engines/goo/goo_bloom.cc
   engines/goo/goo_engine.cc
   engines/goo/goo_instance.cc
   engines/image/image_shader.cc
@@ -231,6 +232,7 @@ set(SRC
   engines/image/image_drawing_mode_image_space.hh
   engines/image/image_drawing_mode_screen_space.hh
   engines/image/image_engine.h
+  engines/goo/goo_bloom.hh
   engines/goo/goo_engine.h
   engines/goo/goo_instance.hh
   engines/goo/goo_shader.hh
@@ -332,6 +334,7 @@ set(GLSL_SRC
   engines/eevee/shaders/infos/eevee_nodetree_infos.hh
 
   engines/image/shaders/infos/engine_image_infos.hh
+  engines/goo/shaders/infos/goo_bloom_infos.hh
   engines/goo/shaders/infos/goo_surface_infos.hh
 
   engines/gpencil/shaders/infos/gpencil_infos.hh
@@ -755,6 +758,7 @@ set(GLSL_SRC
   engines/image/shaders/image_engine_image_tiled_frag.glsl
   engines/image/shaders/image_engine_lib.glsl
 
+  engines/goo/shaders/goo_effect_bloom_frag.glsl
   engines/goo/shaders/goo_surface_flat_frag.glsl
   engines/goo/shaders/goo_surface_flat_vert.glsl
 

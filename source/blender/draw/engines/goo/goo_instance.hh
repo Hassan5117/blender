@@ -16,6 +16,8 @@
 #include "draw_pass.hh"
 #include "draw_view.hh"
 
+#include "goo_bloom.hh"
+
 namespace blender::goo {
 
 using namespace draw;
@@ -37,6 +39,13 @@ class Instance : public DrawEngine {
 
   float4 world_color_ = float4(0.05f, 0.05f, 0.05f, 1.0f);
 
+  /** Scene-linear color target used when post effects need to read the surface result. */
+  TextureFromPool color_tx_ = {"goo.color"};
+  Framebuffer main_fb_ = {"goo.main"};
+  Framebuffer output_fb_ = {"goo.output"};
+
+  Bloom bloom;
+
   StringRefNull name_get() final
   {
     return "Goo Engine";
@@ -49,7 +58,7 @@ class Instance : public DrawEngine {
   void draw(Manager &manager) final;
 
   /** Draw into the given color/depth textures (used by viewport and F12). */
-  void draw_to(Manager &manager, View &view, gpu::FrameBuffer *fb);
+  void draw_to(Manager &manager, View &view, gpu::Texture *color, gpu::Texture *depth);
 
  private:
   PassMain::Sub &material_sub_get(const Material *ma);

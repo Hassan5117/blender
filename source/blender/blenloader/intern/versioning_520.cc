@@ -23,7 +23,10 @@
 #include "DNA_windowmanager_types.h"
 #include "DNA_xr_types.h"
 
+#include "DNA_genfile.h"
+
 #include "BLI_listbase_iterator.hh"
+#include "BLI_math_vector.h"
 #include "BLI_string.h"
 #include "BLI_string_utf8.h"
 #include "BLI_string_utils.hh"
@@ -543,7 +546,7 @@ static void version_solid_color_width_height_defaults(Main &bmain)
   }
 }
 
-void blo_do_versions_520(FileData * /*fd*/, Library * /*lib*/, Main *bmain)
+void blo_do_versions_520(FileData *fd, Library * /*lib*/, Main *bmain)
 {
   if (!MAIN_VERSION_FILE_ATLEAST(bmain, 502, 1)) {
     for (Scene &scene : bmain->scenes) {
@@ -911,6 +914,21 @@ void blo_do_versions_520(FileData * /*fd*/, Library * /*lib*/, Main *bmain)
       }
     }
     FOREACH_NODETREE_END;
+  }
+
+  /* Goo Engine: bloom settings. Files from Goo 4.x already carry these members (read back by
+   * name); files from stock Blender 4.2+ do not, so give them the Goo defaults. */
+  if (!DNA_struct_member_exists_with_alias(fd->filesdna, "SceneEEVEE", "float", "bloom_threshold"))
+  {
+    for (Scene &scene : bmain->scenes) {
+      copy_v3_fl(scene.eevee.bloom_color, 1.0f);
+      scene.eevee.bloom_threshold = 0.8f;
+      scene.eevee.bloom_knee = 0.5f;
+      scene.eevee.bloom_intensity = 0.05f;
+      scene.eevee.bloom_radius = 6.5f;
+      scene.eevee.bloom_clamp = 0.0f;
+      scene.eevee.flag &= ~SCE_EEVEE_BLOOM_ENABLED;
+    }
   }
 
   /**
