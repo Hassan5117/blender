@@ -95,6 +95,7 @@
 
 #include "engines/compositor/compositor_engine.h"
 #include "engines/eevee/eevee_engine.h"
+#include "engines/goo/goo_engine.h"
 #include "engines/external/external_engine.h"
 #include "engines/gpencil/gpencil_engine.hh"
 #include "engines/image/image_engine.h"
@@ -1205,6 +1206,9 @@ void DRWContext::enable_engines(bool gpencil_engine_needed, RenderEngineType *re
         if (render_engine_type == &DRW_engine_viewport_eevee_type) {
           view_data.eevee.set_used(true);
         }
+        else if (render_engine_type == &DRW_engine_viewport_goo_type) {
+          view_data.goo.set_used(true);
+        }
         else if (render_engine_type == &DRW_engine_viewport_workbench_type) {
           view_data.workbench.set_used(true);
         }
@@ -2286,12 +2290,14 @@ bool DRWContext::is_viewport_compositor_enabled() const
 void DRW_engines_register()
 {
   RE_engines_register(&DRW_engine_viewport_eevee_type);
+  RE_engines_register(&DRW_engine_viewport_goo_type);
   RE_engines_register(&DRW_engine_viewport_workbench_type);
 }
 
 void DRW_engines_free()
 {
   eevee::Engine::free_static();
+  goo::Engine::free_static();
   workbench::Engine::free_static();
   draw::gpencil::Engine::free_static();
   image_engine::Engine::free_static();
