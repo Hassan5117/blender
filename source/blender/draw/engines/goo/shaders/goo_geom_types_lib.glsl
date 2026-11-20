@@ -16,3 +16,7 @@ struct MeshVertex {
   /* Default derived from local position. */
   float3 orco_default;
 };
+
+struct WorldPoint {
+  float3 lP;
+};

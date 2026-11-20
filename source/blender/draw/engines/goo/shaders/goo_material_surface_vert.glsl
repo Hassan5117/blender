@@ -10,6 +10,8 @@ VERTEX_SHADER_CREATE_INFO(goo_material_surface_mesh)
 #include "draw_object_infos_lib.glsl"
 #include "draw_view_lib.glsl"
 #include "goo_attributes_mesh_lib.glsl"
+#include "goo_object_lib.glsl"
+
 #include "goo_nodetree_vert_lib.glsl"
 
 void main()

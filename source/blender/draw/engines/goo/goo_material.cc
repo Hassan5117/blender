@@ -8,12 +8,14 @@
 
 #include <sstream>
 
+#include "BKE_lib_id.hh"
 #include "BKE_material.hh"
 
 #include "BLI_math_bits.h"
 #include "BLI_set.hh"
 
 #include "DNA_material_types.h"
+#include "DNA_world_types.h"
 
 #include "GPU_capabilities.hh"
 #include "GPU_material.hh"
@@ -31,6 +33,7 @@ namespace blender::goo {
  * `VAR_MAT_*` options. */
 enum eGooMaterialVariant : uint64_t {
   GOO_MAT_SURFACE_MESH = 1 << 0,
+  GOO_MAT_WORLD = 1 << 1,
 };
 
 namespace {
@@ -143,6 +146,7 @@ static void codegen_callback(void * /*thunk*/, GPUMaterial *gpumat, GPUCodegenOu
 
   GPUCodegenOutput &codegen = *codegen_;
   ShaderCreateInfo &info = *reinterpret_cast<ShaderCreateInfo *>(codegen.create_info);
+  const bool is_world = (GPU_material_uuid_get(gpumat) & GOO_MAT_WORLD) != 0;
 
   /* WORKAROUND (same as EEVEE): object attributes come from the draw manager SSBO. */
   if (GPU_material_uniform_attributes(gpumat) != nullptr) {
@@ -162,7 +166,13 @@ static void codegen_callback(void * /*thunk*/, GPUMaterial *gpumat, GPUCodegenOu
   auto vertex_inputs = info.vertex_inputs_;
   info.vertex_inputs_.clear();
 
-  info.additional_info("goo_material_surface_mesh");
+  if (is_world) {
+    info.define("MAT_GEOM_WORLD");
+    info.additional_info("goo_material_world");
+  }
+  else {
+    info.additional_info("goo_material_surface_mesh");
+  }
 
   if (GPU_material_flag_get(gpumat, GPU_MATFLAG_AO)) {
     info.define("MAT_AMBIENT_OCCLUSION");
@@ -191,7 +201,7 @@ static void codegen_callback(void * /*thunk*/, GPUMaterial *gpumat, GPUCodegenOu
   if (GPU_material_flag_get(gpumat, GPU_MATFLAG_COAT)) {
     info.define("MAT_CLEARCOAT");
   }
-  if (GPU_material_flag_get(gpumat, GPU_MATFLAG_BARYCENTRIC)) {
+  if (GPU_material_flag_get(gpumat, GPU_MATFLAG_BARYCENTRIC) && !is_world) {
     info.define("USE_BARYCENTRICS");
     info.builtins(BuiltinBits::BARYCENTRIC_COORD);
   }
@@ -199,9 +209,28 @@ static void codegen_callback(void * /*thunk*/, GPUMaterial *gpumat, GPUCodegenOu
   SlotAllocator slots;
   slots.reserve_slots(info);
 
-  for (auto &vert_in : vertex_inputs) {
-    slots.set_vertex_input(vert_in.index);
-    info.vertex_in(vert_in.index, vert_in.type, vert_in.name);
+  std::stringstream global_vars;
+  if (is_world) {
+    for (auto &vert_in : vertex_inputs) {
+      global_vars << vert_in.type << " " << vert_in.name << ";\n";
+    }
+    vertex_inputs.clear();
+    if (!info.vertex_out_interfaces_.is_empty()) {
+      const StageInterfaceInfo &iface = *info.vertex_out_interfaces_.first();
+      global_vars << "struct " << iface.name << " {\n";
+      for (const auto &inout : iface.inouts) {
+        global_vars << "  " << inout.type << " " << inout.name << ";\n";
+      }
+      global_vars << "};\n";
+      global_vars << iface.name << " " << iface.instance_name << ";\n";
+      info.vertex_out_interfaces_.clear();
+    }
+  }
+  else {
+    for (auto &vert_in : vertex_inputs) {
+      slots.set_vertex_input(vert_in.index);
+      info.vertex_in(vert_in.index, vert_in.type, vert_in.name);
+    }
   }
 
   if (slots.vertex_id_overflow()) {
@@ -214,14 +243,10 @@ static void codegen_callback(void * /*thunk*/, GPUMaterial *gpumat, GPUCodegenOu
   /* Allow to use Reverse-Z on OpenGL. Does nothing in other backends. */
   info.builtins(BuiltinBits::CLIP_CONTROL);
 
-  /* Attribute loading. Done in the vertex shader for meshes. */
   std::stringstream attr_load;
   attr_load << "{\n";
   attr_load << (!codegen.attr_load.empty() ? codegen.attr_load : "");
   attr_load << "}\n\n";
-
-  std::stringstream vert_gen;
-  vert_gen << "void attrib_load(MeshVertex domain)" << attr_load.str();
 
   /* Make the node-tree resources part of a dedicated interface name. */
   for (auto &res : info.batch_resources_) {
@@ -246,8 +271,11 @@ static void codegen_callback(void * /*thunk*/, GPUMaterial *gpumat, GPUCodegenOu
   generated_resource_header += "#endif\n\n";
   info.generated_sources.append({"goo_nodetree_type_lib.glsl", {}, generated_resource_header});
 
-  /* Vertex stage: attribute loading + (optional) displacement. */
-  {
+  /* Vertex stage: attribute loading + (optional) displacement for meshes. */
+  if (!is_world) {
+    std::stringstream vert_gen;
+    vert_gen << "void attrib_load(MeshVertex domain)" << attr_load.str();
+
     Vector<StringRefNull> dependencies = {"goo_geom_types_lib.glsl",
                                           "goo_attributes_mesh_lib.glsl"};
     const bool use_vertex_displacement = !codegen.displacement.empty() &&
@@ -271,14 +299,24 @@ static void codegen_callback(void * /*thunk*/, GPUMaterial *gpumat, GPUCodegenOu
   /* Fragment stage: node-tree surface evaluation. */
   {
     std::stringstream frag_gen;
-    Vector<StringRefNull> dependencies = {"goo_nodetree_lib.glsl"};
+    Vector<StringRefNull> dependencies;
+
+    if (is_world) {
+      dependencies.append("goo_attributes_world_lib.glsl");
+      dependencies.append("goo_nodetree_lib.glsl");
+      frag_gen << global_vars.str();
+      frag_gen << "void attrib_load(WorldPoint domain)" << attr_load.str();
+    }
+    else {
+      dependencies.append("goo_nodetree_lib.glsl");
+    }
 
     for (const auto &graph : codegen.material_functions) {
       frag_gen << graph.serialized;
       dependencies.extend(graph.dependencies);
     }
 
-    if (!codegen.displacement.empty()) {
+    if (!codegen.displacement.empty() && !is_world) {
       /* Bump displacement. Needed to recompute normals after displacement. */
       info.define("MAT_DISPLACEMENT_BUMP");
       frag_gen << "float3 nodetree_displacement()\n{\n";
@@ -294,6 +332,51 @@ static void codegen_callback(void * /*thunk*/, GPUMaterial *gpumat, GPUCodegenOu
     frag_gen << "}\n\n";
 
     info.generated_sources.append({"goo_nodetree_frag_lib.glsl", dependencies, frag_gen.str()});
+  }
+}
+
+MaterialModule::~MaterialModule()
+{
+  if (default_world_ != nullptr) {
+    BKE_id_free(nullptr, default_world_);
+  }
+}
+
+GPUMaterial *MaterialModule::world_get(World *wo, bool deferred_compilation)
+{
+  if (wo == nullptr || wo->nodetree == nullptr) {
+    if (default_world_ == nullptr) {
+      default_world_ = BKE_id_new_nomain<World>("Goo default world");
+      default_world_->gpumaterial.clear_no_delete();
+    }
+    wo = default_world_;
+  }
+  if (wo->nodetree == nullptr) {
+    return nullptr;
+  }
+
+  GPUMaterialFromNodeTreeResult result = GPU_material_from_nodetree(nullptr,
+                                                                    wo->nodetree,
+                                                                    &wo->gpumaterial,
+                                                                    wo->id.name,
+                                                                    GPU_MAT_GOO,
+                                                                    GOO_MAT_WORLD,
+                                                                    deferred_compilation,
+                                                                    codegen_callback,
+                                                                    nullptr);
+  GPUMaterial *gpumat = result.material;
+  if (gpumat == nullptr) {
+    return nullptr;
+  }
+  switch (GPU_material_status(gpumat)) {
+    case GPU_MAT_SUCCESS:
+      return gpumat;
+    case GPU_MAT_QUEUED:
+      queued_count++;
+      return nullptr;
+    case GPU_MAT_FAILED:
+    default:
+      return nullptr;
   }
 }
 

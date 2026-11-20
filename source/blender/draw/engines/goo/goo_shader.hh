@@ -24,6 +24,7 @@ class UtilityTexture : public draw::Texture {
 class ShaderModule {
  public:
   gpu::StaticShader surface_flat = {"goo_surface_flat"};
+  gpu::StaticShader shadow_mesh = {"goo_shadow_mesh"};
 
   /* Bloom (ported from Goo 4.4 `eevee_legacy_bloom_*`). */
   gpu::StaticShader bloom_blit_hq = {"goo_bloom_blit_hq"};

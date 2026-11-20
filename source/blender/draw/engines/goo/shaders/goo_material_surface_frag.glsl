@@ -7,6 +7,7 @@
 FRAGMENT_SHADER_CREATE_INFO(goo_material_surface_mesh)
 
 #include "draw_view_lib.glsl"
+#include "goo_object_lib.glsl"
 #include "goo_nodetree_lib.glsl"
 
 #include "goo_nodetree_frag_lib.glsl"

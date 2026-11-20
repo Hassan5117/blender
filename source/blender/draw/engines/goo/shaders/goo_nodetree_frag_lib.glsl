@@ -7,10 +7,13 @@
  * placeholder so the file passes build-time linting. */
 #pragma runtime_generated
 
+#include "goo_geom_types_lib.glsl"
 #include "goo_nodetree_lib.glsl"
 
 #ifndef NODETREE_FUNCTIONS /* Needed for linting. */
 #  define NODETREE_FUNCTIONS
+
+void attrib_load(WorldPoint /*domain*/) {}
 
 Closure nodetree_surface(float /*closure_rand*/)
 {

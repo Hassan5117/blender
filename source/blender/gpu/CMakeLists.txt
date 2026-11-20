@@ -21,6 +21,7 @@ set(INC
   ../draw/engines/gpencil
   ../draw/engines/gpencil/shaders/infos
   ../draw/engines/image/shaders/infos
+  ../draw/engines/goo
   ../draw/engines/goo/shaders/infos
   ../draw/engines/overlay/shaders/infos
   ../draw/engines/select

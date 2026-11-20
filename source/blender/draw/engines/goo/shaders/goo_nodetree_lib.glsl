@@ -24,14 +24,12 @@
 SHADER_LIBRARY_CREATE_INFO(goo_lighting)
 SHADER_LIBRARY_CREATE_INFO(UtilityTexture)
 SHADER_LIBRARY_CREATE_INFO(draw_view)
-SHADER_LIBRARY_CREATE_INFO(draw_modelmat)
-SHADER_LIBRARY_CREATE_INFO(draw_object_infos)
 
-#include "draw_model_lib.glsl"
-#include "draw_object_infos_lib.glsl"
+#include "draw_shader_shared.hh"
 #include "draw_view_lib.glsl"
 #include "eevee_bxdf_lut_lib.bsl.hh"
 #include "eevee_utility_tx.bsl.hh"
+#include "goo_defines.hh"
 #include "gpu_shader_codegen_lib.glsl"
 #include "gpu_shader_math_base_lib.glsl"
 #include "gpu_shader_math_safe_lib.glsl"
@@ -44,36 +42,6 @@ SHADER_LIBRARY_CREATE_INFO(draw_object_infos)
 /* -------------------------------------------------------------------- */
 /** \name Engine hooks expected by node GLSL
  * \{ */
-
-ObjectMatrices object_matrices_get()
-{
-  ObjectMatrices m;
-#ifdef MAT_GEOM_WORLD
-  m.model = float4x4(1.0f);
-  m.model_inverse = float4x4(1.0f);
-#else
-  m.model = drw_modelmat();
-  m.model_inverse = drw_modelinv();
-#endif
-  return m;
-}
-
-ObjectInfos object_infos_get()
-{
-#ifdef MAT_GEOM_WORLD
-  ObjectInfos info;
-  info.orco_add = float3(0.0f);
-  info.orco_mul = float3(1.0f);
-  info.ob_color = float4(1.0f);
-  info.ob_index = 0.0f;
-  info.ob_random = 0.0f;
-  info.object_attrs_offset = 0u;
-  info.object_attrs_len = 0u;
-  return info;
-#else
-  return drw_object_infos();
-#endif
-}
 
 ViewMatrices view_matrices_get()
 {
@@ -389,34 +357,128 @@ void closure_weights_reset(float /*closure_rand*/)
 /** \} */
 
 /* -------------------------------------------------------------------- */
-/** \name Lighting (stand-in)
+/** \name Lighting & Shadow Maps
  * \{ */
 
-/* Light layout (2 x float4 per light):
- *   [0] = xyz: world position (point/spot/area) or direction towards light (sun), w: type
- *   [1] = rgb: color * intensity, a: radius */
-#define GOO_LIGHT_SUN 0.0f
-
-float3 goo_light_vector(int i, float3 P, float &attenuation)
+float goo_shadow_pcf(int slice, float3 P, float3 N)
 {
-  float4 a = goo_lights[i * 2 + 0];
-  if (a.w == GOO_LIGHT_SUN) {
-    attenuation = 1.0f;
-    return normalize(a.xyz);
+  GooShadowSlice s = goo_shadow_buf.slices[slice];
+  float3 P_biased = P + N * s.params.x;
+  float4 clip = s.vp * float4(P_biased, 1.0f);
+  if (clip.w <= 0.0f) {
+    return 1.0f;
   }
-  float3 L = a.xyz - P;
-  float dist_sqr = max(1e-4f, dot(L, L));
-  attenuation = 1.0f / dist_sqr;
-  return L * inversesqrt(dist_sqr);
+  float3 ndc = clip.xyz / clip.w;
+  float3 coord = ndc * 0.5f + 0.5f;
+  if (coord.x < 0.0f || coord.x > 1.0f || coord.y < 0.0f || coord.y > 1.0f || coord.z < 0.0f ||
+      coord.z > 1.0f)
+  {
+    return 1.0f;
+  }
+
+  float depth_bias = s.params.y;
+  float texel = s.params.w;
+  float sum = 0.0f;
+  for (int dy = -1; dy <= 1; dy++) {
+    for (int dx = -1; dx <= 1; dx++) {
+      float2 uv = clamp(
+          coord.xy + float2(float(dx), float(dy)) * texel, float2(0.0f), float2(1.0f));
+      float stored_depth = textureLod(goo_shadow_tx, float3(uv, float(slice)), 0.0f).r;
+      sum += (coord.z - depth_bias <= stored_depth) ? 1.0f : 0.0f;
+    }
+  }
+  return sum * (1.0f / 9.0f);
+}
+
+float goo_light_shadow(GooLightData ld, float3 P, float3 N)
+{
+  if (ld.spot_shadow.y < -0.5f) {
+    return 1.0f;
+  }
+  int shadow_start = int(ld.spot_shadow.y + 0.5f);
+  int shadow_count = int(ld.spot_shadow.z + 0.5f);
+  int light_type = int(ld.position_type.w + 0.5f);
+
+  if (light_type == GOO_LIGHT_SUN) {
+    for (int c = 0; c < shadow_count; c++) {
+      GooShadowSlice s = goo_shadow_buf.slices[shadow_start + c];
+      float4 clip = s.vp * float4(P + N * s.params.x, 1.0f);
+      if (clip.w > 0.0f) {
+        float3 coord = (clip.xyz / clip.w) * 0.5f + 0.5f;
+        if (coord.x >= 0.02f && coord.x <= 0.98f && coord.y >= 0.02f && coord.y <= 0.98f &&
+            coord.z >= 0.0f && coord.z <= 1.0f)
+        {
+          return goo_shadow_pcf(shadow_start + c, P, N);
+        }
+      }
+    }
+    return 1.0f;
+  }
+
+  if (light_type == GOO_LIGHT_SPOT) {
+    return goo_shadow_pcf(shadow_start, P, N);
+  }
+
+  if (light_type == GOO_LIGHT_POINT && shadow_count == 6) {
+    float3 d = P - ld.position_type.xyz;
+    float3 ad = abs(d);
+    int face = 0;
+    if (ad.x >= ad.y && ad.x >= ad.z) {
+      face = (d.x >= 0.0f) ? 0 : 1;
+    }
+    else if (ad.y >= ad.z) {
+      face = (d.y >= 0.0f) ? 2 : 3;
+    }
+    else {
+      face = (d.z >= 0.0f) ? 4 : 5;
+    }
+    return goo_shadow_pcf(shadow_start + face, P, N);
+  }
+
+  return 1.0f;
+}
+
+void goo_eval_light(int i, float3 P, float3 N, float &attenuation, float3 &L)
+{
+  GooLightData ld = goo_light_buf.lights[i];
+  int light_type = int(ld.position_type.w + 0.5f);
+  if (light_type == GOO_LIGHT_SUN) {
+    L = normalize(ld.position_type.xyz);
+    attenuation = 1.0f;
+  }
+  else {
+    float3 to_light = ld.position_type.xyz - P;
+    float dist_sqr = dot(to_light, to_light);
+    float radius = max(0.05f, ld.color_energy.a);
+    float denom = max(dist_sqr, radius * radius);
+    L = to_light * inversesqrt(max(1e-6f, dist_sqr));
+    attenuation = 1.0f / denom;
+    if (light_type == GOO_LIGHT_SPOT) {
+      float cos_angle = dot(-L, ld.direction_spot_cos.xyz);
+      float spot_att = clamp((cos_angle - ld.direction_spot_cos.w) * ld.spot_shadow.x, 0.0f, 1.0f);
+      attenuation *= spot_att * spot_att;
+    }
+    else if (light_type == GOO_LIGHT_AREA) {
+      attenuation *= max(0.0f, dot(-L, ld.direction_spot_cos.xyz));
+    }
+  }
+  if (attenuation > 0.0f) {
+    attenuation *= goo_light_shadow(ld, P, N);
+  }
 }
 
 float3 goo_diffuse_light(float3 N, float3 P)
 {
-  float3 light = goo_world_color.rgb;
-  for (int i = 0; i < goo_light_count; i++) {
+  float3 light = goo_light_buf.world_ambient.rgb;
+  for (int i = 0; i < goo_light_buf.light_count; i++) {
     float att;
-    float3 L = goo_light_vector(i, P, att);
-    light += goo_lights[i * 2 + 1].rgb * att * max(0.0f, dot(N, L));
+    float3 L;
+    goo_eval_light(i, P, N, att, L);
+    if (att > 0.0f) {
+      float3 radiance = goo_light_buf.lights[i].color_energy.rgb *
+                        goo_light_buf.lights[i].spot_shadow.w;
+      light += radiance * att * max(0.0f, dot(N, L)) * (1.0f / 3.14159265f);
+    }
   }
   return light;
 }
@@ -425,13 +487,17 @@ float3 goo_specular_light(float3 N, float3 P, float roughness)
 {
   float3 V = drw_world_incident_vector(P);
   float shininess = mix(512.0f, 2.0f, clamp(roughness, 0.0f, 1.0f));
-  float3 light = goo_world_color.rgb * (1.0f - roughness) * 0.5f;
-  for (int i = 0; i < goo_light_count; i++) {
+  float3 light = goo_light_buf.world_ambient.rgb * (1.0f - roughness) * 0.5f;
+  for (int i = 0; i < goo_light_buf.light_count; i++) {
     float att;
-    float3 L = goo_light_vector(i, P, att);
-    float3 H = normalize(L + V);
-    float spec = pow(max(0.0f, dot(N, H)), shininess) * (shininess + 8.0f) / 25.13f;
-    light += goo_lights[i * 2 + 1].rgb * att * spec * max(0.0f, dot(N, L));
+    float3 L;
+    goo_eval_light(i, P, N, att, L);
+    if (att > 0.0f) {
+      float3 H = normalize(L + V);
+      float spec = pow(max(0.0f, dot(N, H)), shininess) * (shininess + 8.0f) / 25.132741f;
+      float3 radiance = goo_light_buf.lights[i].color_energy.rgb * goo_light_buf.lights[i].extra.x;
+      light += radiance * att * spec * max(0.0f, dot(N, L));
+    }
   }
   return light;
 }
@@ -471,13 +537,13 @@ Closure closure_eval(ClosureReflection reflection)
 
 Closure closure_eval(ClosureRefraction refraction)
 {
-  g_goo_radiance += refraction.color * refraction.weight * goo_world_color.rgb;
+  g_goo_radiance += refraction.color * refraction.weight * goo_light_buf.world_ambient.rgb;
   return Closure(0);
 }
 
 Closure closure_eval(ClosureThinRefraction refraction)
 {
-  g_goo_radiance += refraction.color * refraction.weight * goo_world_color.rgb;
+  g_goo_radiance += refraction.color * refraction.weight * goo_light_buf.world_ambient.rgb;
   return Closure(0);
 }
 

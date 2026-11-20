@@ -21,17 +21,29 @@
 
 namespace blender {
 struct Material;
-}
+struct World;
+}  // namespace blender
 
 namespace blender::goo {
 
 class MaterialModule {
+ private:
+  World *default_world_ = nullptr;
+
  public:
+  ~MaterialModule();
+
   /**
    * Return a compiled material for `ma`, or nullptr if it is still compiling or failed
    * (caller falls back to the flat default shader).
    */
   GPUMaterial *surface_get(Material *ma, bool deferred_compilation);
+
+  /**
+   * Return a compiled world background material for `wo` (or a default world if `wo` is null),
+   * or nullptr if it is still compiling or failed.
+   */
+  GPUMaterial *world_get(World *wo, bool deferred_compilation);
 
   /** Number of materials still compiling this sync (used to redraw the viewport). */
   int queued_count = 0;

@@ -94,6 +94,7 @@ set(SRC
   engines/goo/goo_bloom.cc
   engines/goo/goo_engine.cc
   engines/goo/goo_instance.cc
+  engines/goo/goo_light.cc
   engines/goo/goo_material.cc
   engines/image/image_shader.cc
   engines/eevee/eevee_ambient_occlusion.cc
@@ -234,10 +235,13 @@ set(SRC
   engines/image/image_drawing_mode_screen_space.hh
   engines/image/image_engine.h
   engines/goo/goo_bloom.hh
+  engines/goo/goo_defines.hh
   engines/goo/goo_engine.h
   engines/goo/goo_instance.hh
+  engines/goo/goo_light.hh
   engines/goo/goo_material.hh
   engines/goo/goo_shader.hh
+  engines/goo/goo_shader_shared.hh
   engines/image/image_instance.hh
   engines/image/image_partial_updater.hh
   engines/image/image_private.hh
@@ -338,6 +342,7 @@ set(GLSL_SRC
   engines/image/shaders/infos/engine_image_infos.hh
   engines/goo/shaders/infos/goo_bloom_infos.hh
   engines/goo/shaders/infos/goo_material_infos.hh
+  engines/goo/shaders/infos/goo_shadow_infos.hh
   engines/goo/shaders/infos/goo_surface_infos.hh
 
   engines/gpencil/shaders/infos/gpencil_infos.hh
@@ -761,15 +766,23 @@ set(GLSL_SRC
   engines/image/shaders/image_engine_image_tiled_frag.glsl
   engines/image/shaders/image_engine_lib.glsl
 
+  engines/goo/goo_defines.hh
+  engines/goo/goo_shader_shared.hh
   engines/goo/shaders/goo_attributes_mesh_lib.glsl
+  engines/goo/shaders/goo_attributes_world_lib.glsl
   engines/goo/shaders/goo_effect_bloom_frag.glsl
   engines/goo/shaders/goo_geom_types_lib.glsl
   engines/goo/shaders/goo_material_surface_frag.glsl
   engines/goo/shaders/goo_material_surface_vert.glsl
+  engines/goo/shaders/goo_material_world_frag.glsl
+  engines/goo/shaders/goo_material_world_vert.glsl
   engines/goo/shaders/goo_nodetree_frag_lib.glsl
   engines/goo/shaders/goo_nodetree_lib.glsl
   engines/goo/shaders/goo_nodetree_type_lib.glsl
   engines/goo/shaders/goo_nodetree_vert_lib.glsl
+  engines/goo/shaders/goo_object_lib.glsl
+  engines/goo/shaders/goo_shadow_frag.glsl
+  engines/goo/shaders/goo_shadow_vert.glsl
   engines/goo/shaders/goo_surface_flat_frag.glsl
   engines/goo/shaders/goo_surface_flat_vert.glsl
 
