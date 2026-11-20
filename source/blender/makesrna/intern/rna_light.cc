@@ -213,6 +213,13 @@ static void rna_def_light(BlenderRNA *brna)
   RNA_def_property_ui_text(prop, "Diffuse Factor", "Diffuse reflection multiplier");
   RNA_def_property_update(prop, 0, "rna_Light_update");
 
+  prop = RNA_def_property(srna, "light_group_bits", PROP_INT, PROP_NONE);
+  RNA_def_property_int_sdna(prop, nullptr, "light_group_bits");
+  RNA_def_property_array(prop, 4);
+  RNA_def_property_ui_text(prop, "Light Groups", "Light group bitfield");
+  RNA_def_property_clear_flag(prop, PROP_ANIMATABLE);
+  RNA_def_property_update(prop, 0, "rna_Light_update");
+
   prop = RNA_def_property(srna, "transmission_factor", PROP_FLOAT, PROP_FACTOR);
   RNA_def_property_float_sdna(prop, nullptr, "transmission_fac");
   RNA_def_property_range(prop, 0.0f, FLT_MAX);

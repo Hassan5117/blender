@@ -438,7 +438,13 @@ float goo_light_shadow(GooLightData ld, float3 P, float3 N)
   return 1.0f;
 }
 
-void goo_eval_light(int i, float3 P, float3 N, float &attenuation, float3 &L)
+bool goo_light_group_match(int4 light_bits, int4 group_bits)
+{
+  return ((light_bits.x & group_bits.x) | (light_bits.y & group_bits.y) |
+          (light_bits.z & group_bits.z) | (light_bits.w & group_bits.w)) != 0;
+}
+
+void goo_eval_light_unshadowed(int i, float3 P, float &attenuation, float3 &L)
 {
   GooLightData ld = goo_light_buf.lights[i];
   int light_type = int(ld.position_type.w + 0.5f);
@@ -462,8 +468,16 @@ void goo_eval_light(int i, float3 P, float3 N, float &attenuation, float3 &L)
       attenuation *= max(0.0f, dot(-L, ld.direction_spot_cos.xyz));
     }
   }
+}
+
+void goo_eval_light(int i, float3 P, float3 N, float &attenuation, float3 &L)
+{
+  goo_eval_light_unshadowed(i, P, attenuation, L);
   if (attenuation > 0.0f) {
-    attenuation *= goo_light_shadow(ld, P, N);
+    GooLightData ld = goo_light_buf.lights[i];
+    if (goo_light_group_match(ld.light_group_bits, goo_light_group_shadows)) {
+      attenuation *= goo_light_shadow(ld, P, N);
+    }
   }
 }
 
@@ -471,12 +485,15 @@ float3 goo_diffuse_light(float3 N, float3 P)
 {
   float3 light = goo_light_buf.world_ambient.rgb;
   for (int i = 0; i < goo_light_buf.light_count; i++) {
+    GooLightData ld = goo_light_buf.lights[i];
+    if (!goo_light_group_match(ld.light_group_bits, goo_light_groups)) {
+      continue;
+    }
     float att;
     float3 L;
     goo_eval_light(i, P, N, att, L);
     if (att > 0.0f) {
-      float3 radiance = goo_light_buf.lights[i].color_energy.rgb *
-                        goo_light_buf.lights[i].spot_shadow.w;
+      float3 radiance = ld.color_energy.rgb * ld.spot_shadow.w;
       light += radiance * att * max(0.0f, dot(N, L)) * (1.0f / 3.14159265f);
     }
   }
@@ -489,18 +506,164 @@ float3 goo_specular_light(float3 N, float3 P, float roughness)
   float shininess = mix(512.0f, 2.0f, clamp(roughness, 0.0f, 1.0f));
   float3 light = goo_light_buf.world_ambient.rgb * (1.0f - roughness) * 0.5f;
   for (int i = 0; i < goo_light_buf.light_count; i++) {
+    GooLightData ld = goo_light_buf.lights[i];
+    if (!goo_light_group_match(ld.light_group_bits, goo_light_groups)) {
+      continue;
+    }
     float att;
     float3 L;
     goo_eval_light(i, P, N, att, L);
     if (att > 0.0f) {
       float3 H = normalize(L + V);
       float spec = pow(max(0.0f, dot(N, H)), shininess) * (shininess + 8.0f) / 25.132741f;
-      float3 radiance = goo_light_buf.lights[i].color_energy.rgb * goo_light_buf.lights[i].extra.x;
+      float3 radiance = ld.color_energy.rgb * ld.extra.x;
       light += radiance * att * spec * max(0.0f, dot(N, L));
     }
   }
   return light;
 }
+
+/* -------------------------------------------------------------------- */
+/** \name Goo NPR Node Helpers (ShaderInfo, Curvature, ScreenspaceInfo)
+ * \{ */
+
+float3 goo_view_position_get()
+{
+  float3 vP = drw_point_world_to_view(g_data.P);
+  return float3(vP.x, vP.y, -vP.z);
+}
+
+void goo_calc_shader_info(float3 position,
+                          float3 normal,
+                          int4 light_groups,
+                          int4 light_group_shadows,
+                          float4 &half_light,
+                          float &shadows,
+                          float &self_shadows,
+                          float4 &ambient,
+                          float &half_lambert)
+{
+  float3 n_n = safe_normalize(normal);
+  float shadow_accum = 0.0f;
+  float self_shadow_accum = 0.0f;
+  float light_accum = 0.0f;
+  half_light = float4(0.0f);
+  half_lambert = 0.0f;
+
+  for (int i = 0; i < goo_light_buf.light_count; i++) {
+    GooLightData ld = goo_light_buf.lights[i];
+    if (!goo_light_group_match(ld.light_group_bits, light_groups)) {
+      continue;
+    }
+
+    float att_unshadowed;
+    float3 L;
+    goo_eval_light_unshadowed(i, position, att_unshadowed, L);
+    float ndotl = dot(n_n, L);
+
+    if (goo_light_group_match(ld.light_group_bits, light_group_shadows) &&
+        att_unshadowed > 0.0f)
+    {
+      float vis = goo_light_shadow(ld, position, n_n);
+      float light_fac = max(ld.color_energy.r, max(ld.color_energy.g, ld.color_energy.b)) *
+                        ld.spot_shadow.w * att_unshadowed;
+      shadow_accum += (1.0f - vis) * light_fac;
+      float self_vis = min(vis, smoothstep(-0.05f, 0.05f, ndotl));
+      self_shadow_accum += (1.0f - self_vis) * light_fac;
+      light_accum += light_fac;
+    }
+
+    float3 radiance = ld.color_energy.rgb * ld.spot_shadow.w * att_unshadowed *
+                      max(0.0f, ndotl) * (1.0f / 3.14159265f);
+    half_light += float4(radiance, 0.0f);
+    half_lambert += (0.5f * ndotl + 0.5f) * att_unshadowed;
+  }
+
+  shadows = (light_accum > 1e-5f) ? (1.0f - shadow_accum / light_accum) : 1.0f;
+  self_shadows = (light_accum > 1e-5f) ? (1.0f - self_shadow_accum / light_accum) : 1.0f;
+  ambient = float4(goo_light_buf.world_ambient.rgb, 1.0f);
+}
+
+void goo_calc_shader_info(float3 position,
+                          float3 normal,
+                          float4 &half_light,
+                          float &shadows,
+                          float &self_shadows,
+                          float4 &ambient,
+                          float &half_lambert)
+{
+  goo_calc_shader_info(position,
+                       normal,
+                       goo_light_groups,
+                       goo_light_group_shadows,
+                       half_light,
+                       shadows,
+                       self_shadows,
+                       ambient,
+                       half_lambert);
+}
+
+void goo_screenspace_info(float3 viewPos, float4 &scene_col, float &scene_depth)
+{
+  float2 uv = clamp(
+      drw_point_view_to_screen(float3(viewPos.x, viewPos.y, -viewPos.z)).xy, float2(0.0f), float2(1.0f));
+  scene_col = textureLod(goo_scene_color_tx, uv, 0.0f);
+  float depth = textureLod(goo_depth_tx, uv, 0.0f).r;
+  scene_depth = -drw_depth_screen_to_view(depth);
+}
+
+float2 goo_rotate2d(float2 v, float a)
+{
+  float s = sin(a);
+  float c = cos(a);
+  return float2(c * v.x - s * v.y, s * v.x + c * v.y);
+}
+
+void goo_screenspace_curvature(float iiterations,
+                               float sample_scale,
+                               float clamp_dist,
+                               float3 scale,
+                               float &scene_curvature,
+                               float &scene_rim)
+{
+  float2 uvs = clamp(drw_point_world_to_screen(g_data.P).xy, float2(0.0f), float2(1.0f));
+  float2 texel_size = float2(1.0f / 1920.0f, 1.0f / 1080.0f);
+  float mid_depth = drw_depth_screen_to_view(textureLod(goo_depth_tx, uvs, 0.0f).r);
+
+  float clamp_range = 0.001f;
+  int n_samples = clamp(int(iiterations), 1, 64);
+  float i_samples = 64.0f / float(n_samples);
+  float safe_scale = max(abs(sample_scale), 1e-4f);
+  float alpha_hash = fract(sin(dot(gl_FragCoord.xy, float2(12.9898f, 78.233f))) * 43758.5453f);
+
+  float accum = 0.0f;
+  float rim_accum = 0.0f;
+
+  for (int r = 0; r < 8; r++) {
+    float2 offset = goo_rotate2d(float2(1.0f, 0.0f),
+                                 (float(r) + alpha_hash) * 3.14159265f * 0.25f * 0.5f) *
+                    texel_size * sample_scale * scale.xy;
+
+    for (int i = 1; i <= n_samples; i++) {
+      float2 uv_left = clamp(uvs + offset * float(i) * i_samples, float2(0.0f), float2(1.0f));
+      float2 uv_right = clamp(uvs - offset * float(i) * i_samples, float2(0.0f), float2(1.0f));
+      float left = drw_depth_screen_to_view(textureLod(goo_depth_tx, uv_left, 0.0f).r);
+      float right = drw_depth_screen_to_view(textureLod(goo_depth_tx, uv_right, 0.0f).r);
+
+      float curve = clamp(left - mid_depth, -clamp_range, clamp_range) +
+                    clamp(right - mid_depth, -clamp_range, clamp_range);
+      float afac = 1.0f - float(i - 1) / float(n_samples);
+
+      accum += curve * afac * 0.001f;
+      rim_accum += min(mid_depth - min(left, right), clamp_dist) * afac;
+    }
+  }
+
+  scene_curvature = -accum / length(texel_size) * i_samples;
+  scene_rim = rim_accum / safe_scale * clamp_range;
+}
+
+/** \} */
 
 /** \} */
 

@@ -48,7 +48,11 @@ def cycles_shader_nodes_poll(context):
 
 
 def eevee_shader_nodes_poll(context):
-    return context.engine == 'BLENDER_EEVEE'
+    return context.engine in {'BLENDER_EEVEE', 'GOO_ENGINE'}
+
+
+def goo_shader_nodes_poll(context):
+    return context.engine == 'GOO_ENGINE'
 
 
 def object_not_eevee_shader_nodes_poll(context):
@@ -138,6 +142,25 @@ class NODE_MT_shader_node_input_base(node_add_menu.NodeMenu):
             poll=object_material_shader_nodes_poll(context)
         )
         self.node_operator(layout, "ShaderNodeRaycast", poll=object_material_shader_nodes_poll(context))
+        self.node_operator(
+            layout,
+            "ShaderNodeCurvature",
+            poll=object_shader_nodes_poll(context) and goo_shader_nodes_poll(context),
+        )
+        self.node_operator_with_outputs(
+            context,
+            layout,
+            "ShaderNodeScreenspaceInfo",
+            ["Scene Color", "Scene Depth"],
+            poll=object_shader_nodes_poll(context) and goo_shader_nodes_poll(context),
+        )
+        self.node_operator_with_outputs(
+            context,
+            layout,
+            "ShaderNodeShaderInfo",
+            ["Diffuse Shading", "Cast Shadows", "Self Shadows", "Ambient Lighting", "Half-lambert factor"],
+            poll=object_shader_nodes_poll(context) and goo_shader_nodes_poll(context),
+        )
         self.node_operator_with_outputs(context, layout, "GeometryNodeInputSceneTime", ["Frame", "Seconds"])
         self.node_operator(layout, "ShaderNodeTangent")
         self.node_operator_with_outputs(

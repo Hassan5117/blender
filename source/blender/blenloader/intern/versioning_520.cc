@@ -14,6 +14,8 @@
 #include "DNA_brush_types.h"
 #include "DNA_camera_types.h"
 #include "DNA_curve_types.h"
+#include "DNA_light_types.h"
+#include "DNA_material_types.h"
 #include "DNA_mesh_types.h"
 #include "DNA_modifier_types.h"
 #include "DNA_node_tree_interface_types.h"
@@ -928,6 +930,30 @@ void blo_do_versions_520(FileData *fd, Library * /*lib*/, Main *bmain)
       scene.eevee.bloom_radius = 6.5f;
       scene.eevee.bloom_clamp = 0.0f;
       scene.eevee.flag &= ~SCE_EEVEE_BLOOM_ENABLED;
+    }
+  }
+
+  /* Goo Engine: light groups (bit 0 of word 3 is default group 0). */
+  if (!DNA_struct_member_exists_with_alias(fd->filesdna, "Light", "int", "light_group_bits[4]")) {
+    for (Light &la : bmain->lights) {
+      la.light_group_bits[0] = 0;
+      la.light_group_bits[1] = 0;
+      la.light_group_bits[2] = 0;
+      la.light_group_bits[3] = 1;
+    }
+  }
+  if (!DNA_struct_member_exists_with_alias(
+          fd->filesdna, "Material", "int", "light_group_bits[4]"))
+  {
+    for (Material &ma : bmain->materials) {
+      ma.light_group_bits[0] = 0;
+      ma.light_group_bits[1] = 0;
+      ma.light_group_bits[2] = 0;
+      ma.light_group_bits[3] = 1;
+      ma.light_group_shadow_bits[0] = 0;
+      ma.light_group_shadow_bits[1] = 0;
+      ma.light_group_shadow_bits[2] = 0;
+      ma.light_group_shadow_bits[3] = 1;
     }
   }
 

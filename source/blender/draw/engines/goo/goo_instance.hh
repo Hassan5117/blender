@@ -35,9 +35,17 @@ class Instance : public DrawEngine {
  public:
   const DRWContext *draw_ctx = nullptr;
 
+  /** Depth prepass (opaque geometry) for Curvature and ScreenspaceInfo. */
+  PassMain prepass_ps_ = {"Goo.Prepass"};
+
   /** Surface pass. One sub-pass per material color. */
   PassMain surface_ps_ = {"Goo.Surface"};
   Map<const Material *, PassMain::Sub *> material_subs_;
+
+  /** Second-pass surface draw for materials reading scene color/depth (`ScreenspaceInfo`). */
+  PassMain refract_ps_ = {"Goo.Refract"};
+  Map<GPUMaterial *, PassMain::Sub *> refract_subs_;
+  bool has_refract_draws_ = false;
 
   /** Procedural World background pass. */
   PassSimple world_ps_ = {"Goo.World"};
@@ -52,8 +60,14 @@ class Instance : public DrawEngine {
   LightModule lights;
   bool is_image_render_ = false;
 
-  /** Scene-linear color target used when post effects need to read the surface result. */
+  /** Offscreen buffers for depth prepass, screenspace info copy, and post effects. */
   TextureFromPool color_tx_ = {"goo.color"};
+  TextureFromPool prepass_depth_tx_ = {"goo.prepass_depth"};
+  TextureFromPool scene_color_tx_ = {"goo.scene_color"};
+  Texture dummy_color_tx_ = {"goo.dummy_color"};
+  gpu::Texture *prepass_depth_ptr_ = nullptr;
+  gpu::Texture *scene_color_ptr_ = nullptr;
+  Framebuffer prepass_fb_ = {"goo.prepass_fb"};
   Framebuffer main_fb_ = {"goo.main"};
   Framebuffer output_fb_ = {"goo.output"};
 
@@ -76,6 +90,11 @@ class Instance : public DrawEngine {
  private:
   PassMain::Sub &material_sub_get(const Material *ma);
   PassMain::Sub &gpumat_sub_get(Manager &manager, GPUMaterial *gpumat);
+  PassMain::Sub &refract_sub_get(Manager &manager, GPUMaterial *gpumat);
+  void configure_material_sub(PassMain::Sub &sub,
+                              Manager &manager,
+                              GPUMaterial *gpumat,
+                              bool is_refract);
 };
 
 }  // namespace blender::goo

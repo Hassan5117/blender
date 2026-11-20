@@ -39,6 +39,7 @@ void register_shader_nodes()
   register_node_type_sh_clamp();
   register_node_type_sh_combcolor();
   register_node_type_sh_combxyz();
+  register_node_type_sh_curvature();
   register_node_type_sh_curve_float();
   register_node_type_sh_curve_rgb();
   register_node_type_sh_curve_vec();
@@ -75,9 +76,11 @@ void register_shader_nodes()
   register_node_type_sh_raycast();
   register_node_type_sh_rgb();
   register_node_type_sh_rgbtobw();
+  register_node_type_sh_screenspace_info();
   register_node_type_sh_script();
   register_node_type_sh_sepcolor();
   register_node_type_sh_sepxyz();
+  register_node_type_sh_shader_info();
   register_node_type_sh_shadertorgb();
   register_node_type_sh_squeeze();
   register_node_type_sh_subsurface_scattering();

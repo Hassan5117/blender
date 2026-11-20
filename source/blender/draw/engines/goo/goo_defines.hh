@@ -14,8 +14,10 @@
 #define GOO_LIGHT_UBO_SLOT 3
 #define GOO_SHADOW_UBO_SLOT 4
 
-/* Pass-level sampler slots (2 = UtilityTexture, 3 = shadow atlas). */
+/* Pass-level sampler slots (2 = UtilityTexture, 3 = shadow atlas, 4 = prepass depth, 5 = color). */
 #define GOO_SHADOW_TEX_SLOT 3
+#define GOO_DEPTH_TEX_SLOT 4
+#define GOO_SCENE_COLOR_TEX_SLOT 5
 
 #define GOO_MAX_LIGHTS 64
 #define GOO_MAX_SHADOW_SLICES 32

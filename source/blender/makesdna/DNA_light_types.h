@@ -168,6 +168,9 @@ struct Light {
   /* Nodes */
   struct bNodeTree *nodetree = nullptr;
 
+  /* Goo Engine light groups (bit 0 of word 3 is default group 0). */
+  int light_group_bits[4] = {0, 0, 0, 1};
+
   /* Deprecated. */
   DNA_DEPRECATED float energy_deprecated = 10.0f;
   float _pad2 = 0.0f;

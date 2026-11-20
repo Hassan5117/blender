@@ -29,6 +29,8 @@ struct [[host_shared]] GooLightData {
   float4 spot_shadow;
   /** x: spec_fac; y: shadow_far; z: shadow_near; w: unused. */
   float4 extra;
+  /** Light group bitmask (128 bits, bit 0 of `.w` is default group 0). */
+  int4 light_group_bits;
 };
 
 struct [[host_shared]] GooLightBlock {

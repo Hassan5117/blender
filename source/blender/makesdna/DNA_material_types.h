@@ -446,6 +446,10 @@ struct Material {
 
   char _pad3[4] = {};
 
+  /* Goo Engine light groups (bit 0 of word 3 is default group 0). */
+  int light_group_bits[4] = {0, 0, 0, 1};
+  int light_group_shadow_bits[4] = {0, 0, 0, 1};
+
   /**
    * Cached slots for texture painting, must be refreshed via
    * BKE_texpaint_slot_refresh_cache before using.

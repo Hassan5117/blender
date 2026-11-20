@@ -29,12 +29,16 @@ SMOOTH(float3, P)
 SMOOTH(float3, N)
 GPU_SHADER_NAMED_INTERFACE_END(interp)
 
-/* Scene lighting + shadow maps. */
+/* Scene lighting + shadow maps + screenspace buffers. */
 GPU_SHADER_CREATE_INFO(goo_lighting)
 TYPEDEF_SOURCE("goo_shader_shared.hh")
 UNIFORM_BUF(GOO_LIGHT_UBO_SLOT, GooLightBlock, goo_light_buf)
 UNIFORM_BUF(GOO_SHADOW_UBO_SLOT, GooShadowBlock, goo_shadow_buf)
 SAMPLER(GOO_SHADOW_TEX_SLOT, sampler2DArrayDepth, goo_shadow_tx)
+SAMPLER(GOO_DEPTH_TEX_SLOT, sampler2DDepth, goo_depth_tx)
+SAMPLER(GOO_SCENE_COLOR_TEX_SLOT, sampler2D, goo_scene_color_tx)
+PUSH_CONSTANT(int4, goo_light_groups)
+PUSH_CONSTANT(int4, goo_light_group_shadows)
 GPU_SHADER_CREATE_END()
 
 GPU_SHADER_CREATE_INFO(goo_material_surface_mesh)

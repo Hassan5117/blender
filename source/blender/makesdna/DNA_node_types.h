@@ -2732,6 +2732,15 @@ struct NodeShaderAttribute {
   char _pad[4] = {};
 };
 
+struct NodeShaderInfo {
+  DNA_DEFINE_CXX_METHODS(NodeShaderInfo)
+
+  int light_group_bits[4] = {0, 0, 0, 1};
+  int light_group_shadow_bits[4] = {0, 0, 0, 1};
+  char use_own_light_groups = 0;
+  char _pad[7] = {};
+};
+
 struct NodeShaderVectTransform {
   DNA_DEFINE_CXX_METHODS(NodeShaderVectTransform)
 

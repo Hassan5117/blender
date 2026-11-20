@@ -55,6 +55,7 @@ class RENDER_PT_color_management(RenderButtonsPanel, Panel):
     COMPAT_ENGINES = {
         'BLENDER_RENDER',
         'BLENDER_EEVEE',
+        'GOO_ENGINE',
         'BLENDER_WORKBENCH',
     }
 
@@ -99,6 +100,7 @@ class RENDER_PT_color_management_working_space(RenderButtonsPanel, Panel):
     COMPAT_ENGINES = {
         'BLENDER_RENDER',
         'BLENDER_EEVEE',
+        'GOO_ENGINE',
         'BLENDER_WORKBENCH',
     }
 
@@ -139,6 +141,7 @@ class RENDER_PT_color_management_advanced(RenderButtonsPanel, Panel):
     COMPAT_ENGINES = {
         'BLENDER_RENDER',
         'BLENDER_EEVEE',
+        'GOO_ENGINE',
         'BLENDER_WORKBENCH',
     }
 
@@ -161,6 +164,7 @@ class RENDER_PT_color_management_curves(RenderButtonsPanel, Panel):
     COMPAT_ENGINES = {
         'BLENDER_RENDER',
         'BLENDER_EEVEE',
+        'GOO_ENGINE',
         'BLENDER_WORKBENCH',
     }
 
@@ -199,6 +203,7 @@ class RENDER_PT_color_management_white_balance(RenderButtonsPanel, Panel):
     COMPAT_ENGINES = {
         'BLENDER_RENDER',
         'BLENDER_EEVEE',
+        'GOO_ENGINE',
         'BLENDER_WORKBENCH',
     }
 
@@ -941,6 +946,7 @@ class RENDER_PT_gpencil(RenderButtonsPanel, Panel):
     COMPAT_ENGINES = {
         'BLENDER_RENDER',
         'BLENDER_EEVEE',
+        'GOO_ENGINE',
         'BLENDER_WORKBENCH',
     }
 
@@ -959,6 +965,7 @@ class RENDER_PT_grease_pencil_viewport(RenderButtonsPanel, Panel):
     COMPAT_ENGINES = {
         'BLENDER_RENDER',
         'BLENDER_EEVEE',
+        'GOO_ENGINE',
         'BLENDER_WORKBENCH',
     }
 
@@ -981,6 +988,7 @@ class RENDER_PT_grease_pencil_render(RenderButtonsPanel, Panel):
     COMPAT_ENGINES = {
         'BLENDER_RENDER',
         'BLENDER_EEVEE',
+        'GOO_ENGINE',
         'BLENDER_WORKBENCH',
     }
 
@@ -1082,6 +1090,7 @@ class RENDER_PT_simplify(RenderButtonsPanel, Panel):
     COMPAT_ENGINES = {
         'BLENDER_RENDER',
         'BLENDER_EEVEE',
+        'GOO_ENGINE',
         'BLENDER_WORKBENCH',
     }
 
@@ -1099,6 +1108,7 @@ class RENDER_PT_simplify_viewport(RenderButtonsPanel, Panel):
     COMPAT_ENGINES = {
         'BLENDER_RENDER',
         'BLENDER_EEVEE',
+        'GOO_ENGINE',
         'BLENDER_WORKBENCH',
     }
 
@@ -1131,6 +1141,7 @@ class RENDER_PT_simplify_render(RenderButtonsPanel, Panel):
     COMPAT_ENGINES = {
         'BLENDER_RENDER',
         'BLENDER_EEVEE',
+        'GOO_ENGINE',
         'BLENDER_WORKBENCH',
     }
 
@@ -1157,6 +1168,7 @@ class RENDER_PT_simplify_greasepencil(RenderButtonsPanel, Panel, GreasePencilSim
     COMPAT_ENGINES = {
         'BLENDER_RENDER',
         'BLENDER_EEVEE',
+        'GOO_ENGINE',
         'BLENDER_WORKBENCH',
     }
     bl_options = {'DEFAULT_CLOSED'}
@@ -1181,8 +1193,40 @@ class RENDER_PT_hydra_debug(RenderButtonsPanel, Panel):
         layout.prop(hydra, "export_method")
 
 
+class RENDER_PT_goo_bloom(RenderButtonsPanel, Panel):
+    bl_label = "Bloom"
+    bl_options = {'DEFAULT_CLOSED'}
+    COMPAT_ENGINES = {'GOO_ENGINE'}
+
+    @classmethod
+    def poll(cls, context):
+        return (context.engine in cls.COMPAT_ENGINES)
+
+    def draw_header(self, context):
+        scene = context.scene
+        props = scene.eevee
+        self.layout.prop(props, "use_bloom", text="")
+
+    def draw(self, context):
+        layout = self.layout
+        layout.use_property_split = True
+
+        scene = context.scene
+        props = scene.eevee
+
+        layout.active = props.use_bloom
+        col = layout.column()
+        col.prop(props, "bloom_threshold")
+        col.prop(props, "bloom_knee")
+        col.prop(props, "bloom_radius")
+        col.prop(props, "bloom_color")
+        col.prop(props, "bloom_intensity")
+        col.prop(props, "bloom_clamp")
+
+
 classes = (
     RENDER_PT_context,
+    RENDER_PT_goo_bloom,
     RENDER_PT_eevee_sampling,
     RENDER_PT_eevee_sampling_viewport,
     RENDER_PT_eevee_sampling_render,

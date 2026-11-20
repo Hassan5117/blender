@@ -111,6 +111,10 @@ void LightModule::light_sync(Object *ob, const View &camera_view)
   dst.spot_shadow.z = 0.0f;
   dst.spot_shadow.w = la.diff_fac;
   dst.extra.x = la.spec_fac;
+  dst.light_group_bits = int4(la.light_group_bits[0],
+                              la.light_group_bits[1],
+                              la.light_group_bits[2],
+                              la.light_group_bits[3]);
 
   const float3 pos = obmat.location();
   const float3 fwd = -math::normalize(float3(obmat.z_axis()));

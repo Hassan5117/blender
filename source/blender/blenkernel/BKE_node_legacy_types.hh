@@ -137,6 +137,10 @@
 #define SH_NODE_RAYCAST 718
 #define SH_NODE_SCENE_TIME 719
 
+#define SH_NODE_SHADER_INFO 800
+#define SH_NODE_SCREENSPACE_INFO 801
+#define SH_NODE_CURVATURE 807
+
 /** \} */
 
 /* -------------------------------------------------------------------- */

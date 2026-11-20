@@ -173,6 +173,7 @@ static void codegen_callback(void * /*thunk*/, GPUMaterial *gpumat, GPUCodegenOu
   else {
     info.additional_info("goo_material_surface_mesh");
   }
+  info.define("GOO_ENGINE");
 
   if (GPU_material_flag_get(gpumat, GPU_MATFLAG_AO)) {
     info.define("MAT_AMBIENT_OCCLUSION");

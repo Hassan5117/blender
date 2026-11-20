@@ -28,6 +28,7 @@ class RENDER_PT_freestyle(RenderFreestyleButtonsPanel, Panel):
     COMPAT_ENGINES = {
         'BLENDER_RENDER',
         'BLENDER_EEVEE',
+        'GOO_ENGINE',
         'BLENDER_WORKBENCH',
     }
 
