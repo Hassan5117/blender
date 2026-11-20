@@ -9,6 +9,9 @@
 #include "BKE_material.hh"
 #include "BKE_object.hh"
 
+#include "BLI_math_matrix.hh"
+
+#include "DNA_light_types.h"
 #include "DNA_material_types.h"
 #include "DNA_object_types.h"
 #include "DNA_scene_types.h"
@@ -20,6 +23,8 @@
 #include "draw_cache.hh"
 #include "draw_common.hh"
 #include "draw_view_data.hh"
+
+#include "../eevee/eevee_defines.hh"
 
 #include "goo_instance.hh"
 #include "goo_shader.hh"
@@ -38,6 +43,8 @@ void Instance::init()
     world_color_ = float4(0.05f, 0.05f, 0.05f, 1.0f);
   }
 
+  is_image_render_ = draw_ctx->is_image_render();
+
   const float2 size = draw_ctx->viewport_size_get();
   bloom.init(draw_ctx->scene, int2(size));
 }
@@ -45,6 +52,9 @@ void Instance::init()
 void Instance::begin_sync()
 {
   material_subs_.clear();
+  gpumat_subs_.clear();
+  materials.begin_sync();
+  light_count_ = 0;
 
   surface_ps_.init();
   surface_ps_.state_set(DRW_STATE_WRITE_COLOR | DRW_STATE_WRITE_DEPTH |
@@ -65,9 +75,53 @@ PassMain::Sub &Instance::material_sub_get(const Material *ma)
   });
 }
 
+PassMain::Sub &Instance::gpumat_sub_get(Manager &manager, GPUMaterial *gpumat)
+{
+  return *gpumat_subs_.lookup_or_add_cb(gpumat, [&]() {
+    const Material *ma = GPU_material_get_material(gpumat);
+    PassMain::Sub &sub = surface_ps_.sub(ma ? ma->id.name + 2 : "Material");
+    sub.material_set(manager, gpumat, !is_image_render_);
+    sub.bind_texture(RBUFS_UTILITY_TEX_SLOT, ShaderModule::get().utility_tx);
+    /* References: light data is only complete after all objects are synced. */
+    sub.push_constant("goo_lights", lights_data_, max_lights * 2);
+    sub.push_constant("goo_light_count", &light_count_);
+    sub.push_constant("goo_world_color", &world_color_);
+    return &sub;
+  });
+}
+
+void Instance::light_sync(Object *ob)
+{
+  if (light_count_ >= max_lights) {
+    return;
+  }
+  const Light *la = &DRW_object_get_data_for_drawing<const Light>(*ob);
+  const float3 color = float3(la->r, la->g, la->b);
+  const float4x4 &mat = ob->object_to_world();
+  float4 &a = lights_data_[light_count_ * 2 + 0];
+  float4 &b = lights_data_[light_count_ * 2 + 1];
+  if (la->type == LA_SUN) {
+    /* Direction towards the light (sun shines along its local -Z). */
+    a = float4(math::normalize(mat.z_axis()), 0.0f);
+    b = float4(color * la->energy / float(M_PI), la->radius);
+  }
+  else {
+    a = float4(mat.location(), 1.0f);
+    /* Radiant power [W] to radiance-like scale used by the stand-in Lambert term. */
+    b = float4(color * la->energy / (4.0f * float(M_PI) * float(M_PI)), la->radius);
+  }
+  light_count_++;
+}
+
 void Instance::object_sync(ObjectRef &ob_ref, Manager &manager)
 {
   Object *ob = ob_ref.object;
+  if (ob->type == OB_LAMP) {
+    if (DRW_object_visibility_in_active_context(ob) & OB_VISIBLE_SELF) {
+      light_sync(ob);
+    }
+    return;
+  }
   if (ob->type != OB_MESH) {
     return;
   }
@@ -79,17 +133,46 @@ void Instance::object_sync(ObjectRef &ob_ref, Manager &manager)
     return;
   }
 
+  ResourceHandleRange handle = manager.unique_handle(ob_ref);
+
+  /* Node-tree materials. */
+  const int mat_count = std::max(1, BKE_object_material_count_eval(ob));
+  Vector<GPUMaterial *> gpumats(mat_count, nullptr);
+  bool all_ready = true;
+  for (int i = 0; i < mat_count; i++) {
+    Material *ma = BKE_object_material_get_eval(ob, i + 1);
+    gpumats[i] = materials.surface_get(ma, !is_image_render_);
+    all_ready &= gpumats[i] != nullptr;
+  }
+
+  if (all_ready) {
+    Span<gpu::Batch *> geoms = DRW_cache_mesh_surface_shaded_get(
+        ob, Span<const GPUMaterial *>(const_cast<const GPUMaterial **>(gpumats.data()), mat_count));
+    for (int i : geoms.index_range()) {
+      if (geoms[i] == nullptr) {
+        continue;
+      }
+      gpumat_sub_get(manager, gpumats[i]).draw(geoms[i], handle);
+    }
+    return;
+  }
+
+  /* Fallback while shaders compile (or on compile failure): flat shading. */
   gpu::Batch *geom = DRW_cache_mesh_surface_get(ob);
   if (geom == nullptr) {
     return;
   }
-
   const Material *ma = BKE_object_material_get_eval(ob, 1);
-  ResourceHandleRange handle = manager.unique_handle(ob_ref);
   material_sub_get(ma).draw(geom, handle);
 }
 
-void Instance::end_sync() {}
+void Instance::end_sync()
+{
+  if (materials.queued_count > 0 && !is_image_render_) {
+    /* Keep redrawing until all materials are compiled. */
+    DRW_viewport_request_redraw();
+  }
+}
 
 void Instance::draw_to(Manager &manager, View &view, gpu::Texture *color, gpu::Texture *depth)
 {

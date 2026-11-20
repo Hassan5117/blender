@@ -10,9 +10,16 @@
 
 #pragma once
 
+#include "DRW_gpu_wrapper.hh"
 #include "GPU_shader.hh"
 
 namespace blender::goo {
+
+class UtilityTexture : public draw::Texture {
+ public:
+  UtilityTexture();
+  ~UtilityTexture() = default;
+};
 
 class ShaderModule {
  public:
@@ -24,6 +31,8 @@ class ShaderModule {
   gpu::StaticShader bloom_downsample_hq = {"goo_bloom_downsample_hq"};
   gpu::StaticShader bloom_upsample_hq = {"goo_bloom_upsample_hq"};
   gpu::StaticShader bloom_resolve_hq = {"goo_bloom_resolve_hq"};
+
+  UtilityTexture utility_tx;
 
   static ShaderModule &get();
   static void module_free();

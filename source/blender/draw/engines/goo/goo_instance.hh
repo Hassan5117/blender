@@ -17,6 +17,7 @@
 #include "draw_view.hh"
 
 #include "goo_bloom.hh"
+#include "goo_material.hh"
 
 namespace blender::goo {
 
@@ -38,6 +39,16 @@ class Instance : public DrawEngine {
   Map<const Material *, PassMain::Sub *> material_subs_;
 
   float4 world_color_ = float4(0.05f, 0.05f, 0.05f, 1.0f);
+
+  /** Node-tree materials (one sub-pass per GPUMaterial). */
+  MaterialModule materials;
+  Map<GPUMaterial *, PassMain::Sub *> gpumat_subs_;
+
+  /** Scene lights (stand-in light list, 2 x float4 per light, see goo_nodetree_lib.glsl). */
+  static constexpr int max_lights = 16;
+  float4 lights_data_[max_lights * 2];
+  int light_count_ = 0;
+  bool is_image_render_ = false;
 
   /** Scene-linear color target used when post effects need to read the surface result. */
   TextureFromPool color_tx_ = {"goo.color"};
@@ -62,6 +73,8 @@ class Instance : public DrawEngine {
 
  private:
   PassMain::Sub &material_sub_get(const Material *ma);
+  PassMain::Sub &gpumat_sub_get(Manager &manager, GPUMaterial *gpumat);
+  void light_sync(Object *ob);
 };
 
 }  // namespace blender::goo

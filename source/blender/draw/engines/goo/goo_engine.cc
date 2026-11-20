@@ -25,6 +25,9 @@
 
 #include "draw_view_data.hh"
 
+#include "../eevee/eevee_defines.hh"
+#include "../eevee/eevee_lut.hh"
+
 #include "goo_engine.h" /* Own include. */
 #include "goo_instance.hh"
 #include "goo_shader.hh"
@@ -34,8 +37,68 @@ namespace blender {
 namespace goo {
 
 /* -------------------------------------------------------------------- */
-/** \name Shader module
+/** \name Utility Texture & Shader module
  * \{ */
+
+UtilityTexture::UtilityTexture()
+    : draw::Texture("GooUtilityTx",
+                    gpu::TextureFormat::SFLOAT_16_16_16_16,
+                    GPU_TEXTURE_USAGE_SHADER_READ,
+                    int2(UTIL_TEX_SIZE),
+                    UTIL_BSDF_LAYER + UTIL_BSDF_LAYER_COUNT,
+                    nullptr)
+{
+  struct Layer {
+    float4 data[UTIL_TEX_SIZE][UTIL_TEX_SIZE];
+  };
+  constexpr int lut_size = UTIL_TEX_SIZE;
+  constexpr int layer_count = UTIL_BSDF_LAYER + UTIL_BSDF_LAYER_COUNT;
+  Vector<Layer> data(layer_count);
+  {
+    Layer &layer = data[UTIL_BLUE_NOISE_LAYER];
+    memcpy(layer.data, eevee::lut::blue_noise, sizeof(layer));
+  }
+  {
+    Layer &layer = data[UTIL_SSS_TRANSMITTANCE_PROFILE_LAYER];
+    for (auto y : IndexRange(lut_size)) {
+      for (auto x : IndexRange(lut_size)) {
+        layer.data[y][x][0] = eevee::lut::burley_sss_profile[x][0];
+        layer.data[y][x][1] = eevee::lut::random_walk_sss_profile[x][0];
+        layer.data[y][x][2] = 0.0f;
+        layer.data[y][x][UTIL_DISK_INTEGRAL_COMP] = eevee::lut::ltc_disk_integral[y][x][0];
+      }
+    }
+  }
+  {
+    Layer &layer = data[UTIL_LTC_MAT_LAYER];
+    memcpy(layer.data, eevee::lut::ltc_mat_ggx, sizeof(layer));
+  }
+  {
+    Layer &layer = data[UTIL_BRDF_LAYER];
+    for (auto x : IndexRange(lut_size)) {
+      for (auto y : IndexRange(lut_size)) {
+        layer.data[y][x][0] = eevee::lut::brdf_ggx[y][x][0];
+        layer.data[y][x][1] = eevee::lut::brdf_ggx[y][x][1];
+        layer.data[y][x][2] = eevee::lut::brdf_ggx[y][x][2];
+        layer.data[y][x][3] = 0.0f;
+      }
+    }
+  }
+  {
+    for (auto layer_id : IndexRange(16)) {
+      Layer &layer = data[UTIL_BSDF_LAYER + layer_id];
+      for (auto x : IndexRange(lut_size)) {
+        for (auto y : IndexRange(lut_size)) {
+          layer.data[y][x][0] = eevee::lut::bsdf_ggx[layer_id][y][x][0];
+          layer.data[y][x][1] = eevee::lut::bsdf_ggx[layer_id][y][x][1];
+          layer.data[y][x][2] = eevee::lut::bsdf_ggx[layer_id][y][x][2];
+          layer.data[y][x][3] = eevee::lut::btdf_ggx[layer_id][y][x][0];
+        }
+      }
+    }
+  }
+  GPU_texture_update_mipmap(*this, 0, GPU_DATA_FLOAT, data.data());
+}
 
 static ShaderModule *g_shader_module = nullptr;
 

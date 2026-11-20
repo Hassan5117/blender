@@ -48,6 +48,8 @@ struct bNodeTree;
 enum eGPUMaterialEngine {
   GPU_MAT_EEVEE,
   GPU_MAT_COMPOSITOR,
+  /** Goo Engine (EEVEE-Legacy based NPR engine). */
+  GPU_MAT_GOO,
   GPU_MAT_ENGINE_MAX,
 };
 
