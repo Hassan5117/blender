@@ -346,6 +346,8 @@ void scene_time_uniforms(float &seconds, float &frame)
 float3 g_goo_radiance;
 float3 g_goo_transmittance;
 float g_goo_holdout;
+float g_goo_frag_depth;
+bool g_goo_frag_depth_set;
 
 void closure_weights_reset(float /*closure_rand*/)
 {
@@ -354,13 +356,58 @@ void closure_weights_reset(float /*closure_rand*/)
   g_goo_holdout = 0.0f;
 }
 
+void goo_set_depth(float z_in)
+{
+  float view_near = drw_depth_screen_to_view(0.0f);
+  float view_far = drw_depth_screen_to_view(1.0f);
+  float z_clipped = max(min(-z_in, view_near), view_far);
+  g_goo_frag_depth = drw_depth_view_to_screen(z_clipped);
+  g_goo_frag_depth_set = true;
+}
+
+/* Hashed alpha threshold (Wyman & McGuire), matching Goo 4.4 `prepass_frag.glsl`. */
+float goo_hash2(float2 a)
+{
+  return fract(1e4f * sin(17.0f * a.x + 0.1f * a.y) * (0.1f + abs(sin(13.0f * a.y + a.x))));
+}
+
+float goo_hash3(float3 a)
+{
+  return goo_hash2(float2(goo_hash2(a.xy), a.z));
+}
+
+float goo_hashed_alpha_threshold(float3 co)
+{
+  float max_deriv = max(max(length(gpu_dfdx(co)), length(gpu_dfdy(co))), 1e-6f);
+  float pix_scale = 1.0f / max_deriv;
+
+  float pix_scale_log = log2(pix_scale);
+  float2 pix_scales = float2(exp2(floor(pix_scale_log)), exp2(ceil(pix_scale_log)));
+
+  float2 alpha_n = float2(goo_hash3(floor(pix_scales.x * co)),
+                          goo_hash3(floor(pix_scales.y * co)));
+
+  float fac = fract(pix_scale_log);
+  float x = mix(alpha_n.x, alpha_n.y, fac);
+
+  float a = min(fac, 1.0f - fac);
+  float one_a = 1.0f - a;
+  float denom = 1.0f / max(2.0f * a * one_a, 1e-6f);
+  float one_x = 1.0f - x;
+  float3 cases = float3(
+      (x * x) * denom, (x - 0.5f * a) / max(one_a, 1e-6f), 1.0f - (one_x * one_x * denom));
+
+  float threshold = (x < one_a) ? ((x < a) ? cases.x : cases.y) : cases.z;
+  return clamp(threshold, 1.0e-6f, 1.0f);
+}
+
 /** \} */
 
 /* -------------------------------------------------------------------- */
 /** \name Lighting & Shadow Maps
  * \{ */
 
-float goo_shadow_pcf(int slice, float3 P, float3 N)
+float goo_shadow_pcf(int slice, float3 P, float3 N, int shadow_id_mode)
 {
   GooShadowSlice s = goo_shadow_buf.slices[slice];
   float3 P_biased = P + N * s.params.x;
@@ -378,19 +425,36 @@ float goo_shadow_pcf(int slice, float3 P, float3 N)
 
   float depth_bias = s.params.y;
   float texel = s.params.w;
+  uint my_id = (shadow_id_mode != 0) ? goo_resource_id_get() : 0u;
+  int2 id_max = int2(0);
+  if (shadow_id_mode != 0) {
+    id_max = max(textureSize(goo_shadow_id_tx, 0).xy - int2(1), int2(0));
+  }
+
   float sum = 0.0f;
   for (int dy = -1; dy <= 1; dy++) {
     for (int dx = -1; dx <= 1; dx++) {
       float2 uv = clamp(
           coord.xy + float2(float(dx), float(dy)) * texel, float2(0.0f), float2(1.0f));
       float stored_depth = textureLod(goo_shadow_tx, float3(uv, float(slice)), 0.0f).r;
-      sum += (coord.z - depth_bias <= stored_depth) ? 1.0f : 0.0f;
+      bool lit = (coord.z - depth_bias <= stored_depth);
+      if (!lit && shadow_id_mode != 0) {
+        int2 px = clamp(int2(uv * float2(id_max + int2(1))), int2(0), id_max);
+        uint caster_id = texelFetch(goo_shadow_id_tx, int3(px, slice), 0).r;
+        if (shadow_id_mode == 1) {
+          lit = (my_id != 0u) && (caster_id == my_id);
+        }
+        else {
+          lit = (my_id == 0u) || (caster_id != my_id);
+        }
+      }
+      sum += lit ? 1.0f : 0.0f;
     }
   }
   return sum * (1.0f / 9.0f);
 }
 
-float goo_light_shadow(GooLightData ld, float3 P, float3 N)
+float goo_light_shadow(GooLightData ld, float3 P, float3 N, int shadow_id_mode)
 {
   if (ld.spot_shadow.y < -0.5f) {
     return 1.0f;
@@ -408,7 +472,7 @@ float goo_light_shadow(GooLightData ld, float3 P, float3 N)
         if (coord.x >= 0.02f && coord.x <= 0.98f && coord.y >= 0.02f && coord.y <= 0.98f &&
             coord.z >= 0.0f && coord.z <= 1.0f)
         {
-          return goo_shadow_pcf(shadow_start + c, P, N);
+          return goo_shadow_pcf(shadow_start + c, P, N, shadow_id_mode);
         }
       }
     }
@@ -416,7 +480,7 @@ float goo_light_shadow(GooLightData ld, float3 P, float3 N)
   }
 
   if (light_type == GOO_LIGHT_SPOT) {
-    return goo_shadow_pcf(shadow_start, P, N);
+    return goo_shadow_pcf(shadow_start, P, N, shadow_id_mode);
   }
 
   if (light_type == GOO_LIGHT_POINT && shadow_count == 6) {
@@ -432,7 +496,7 @@ float goo_light_shadow(GooLightData ld, float3 P, float3 N)
     else {
       face = (d.z >= 0.0f) ? 4 : 5;
     }
-    return goo_shadow_pcf(shadow_start + face, P, N);
+    return goo_shadow_pcf(shadow_start + face, P, N, shadow_id_mode);
   }
 
   return 1.0f;
@@ -476,7 +540,8 @@ void goo_eval_light(int i, float3 P, float3 N, float &attenuation, float3 &L)
   if (attenuation > 0.0f) {
     GooLightData ld = goo_light_buf.lights[i];
     if (goo_light_group_match(ld.light_group_bits, goo_light_group_shadows)) {
-      attenuation *= goo_light_shadow(ld, P, N);
+      int shadow_id_mode = ((goo_material_flags & GOO_MAT_FLAG_CHECK_SHADOW_ID) != 0) ? 1 : 0;
+      attenuation *= goo_light_shadow(ld, P, N, shadow_id_mode);
     }
   }
 }
@@ -564,11 +629,13 @@ void goo_calc_shader_info(float3 position,
     if (goo_light_group_match(ld.light_group_bits, light_group_shadows) &&
         att_unshadowed > 0.0f)
     {
-      float vis = goo_light_shadow(ld, position, n_n);
+      int cast_mode = ((goo_material_flags & GOO_MAT_FLAG_CHECK_SHADOW_ID) != 0) ? 1 : 0;
+      float vis = goo_light_shadow(ld, position, n_n, cast_mode);
       float light_fac = max(ld.color_energy.r, max(ld.color_energy.g, ld.color_energy.b)) *
                         ld.spot_shadow.w * att_unshadowed;
       shadow_accum += (1.0f - vis) * light_fac;
-      float self_vis = min(vis, smoothstep(-0.05f, 0.05f, ndotl));
+      float self_map_vis = goo_light_shadow(ld, position, n_n, 2);
+      float self_vis = min(self_map_vis, smoothstep(-0.05f, 0.05f, ndotl));
       self_shadow_accum += (1.0f - self_vis) * light_fac;
       light_accum += light_fac;
     }

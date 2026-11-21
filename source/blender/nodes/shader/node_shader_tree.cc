@@ -471,13 +471,14 @@ static bool ntree_weight_tree_tag_nodes(bNode *fromnode, bNode *tonode, void *us
                                        SH_NODE_MIX_SHADER,
                                        SH_NODE_OUTPUT_WORLD,
                                        SH_NODE_OUTPUT_MATERIAL,
-                                       SH_NODE_SHADERTORGB);
+                                       SH_NODE_SHADERTORGB,
+                                       SH_NODE_SET_DEPTH);
   if (tonode->runtime->tmp_flag == -1 && to_node_from_weight_tree) {
     tonode->runtime->tmp_flag = *node_count;
     *node_count += (tonode->type_legacy == SH_NODE_MIX_SHADER) ? 4 : 1;
   }
   if (fromnode->runtime->tmp_flag == -1 &&
-      ELEM(fromnode->type_legacy, SH_NODE_ADD_SHADER, SH_NODE_MIX_SHADER))
+      ELEM(fromnode->type_legacy, SH_NODE_ADD_SHADER, SH_NODE_MIX_SHADER, SH_NODE_SET_DEPTH))
   {
     fromnode->runtime->tmp_flag = *node_count;
     *node_count += (fromnode->type_legacy == SH_NODE_MIX_SHADER) ? 4 : 1;
@@ -530,7 +531,8 @@ static void ntree_shader_weight_tree_invert(bNodeTree *ntree, bNode *output_node
               ->value = 1.0f;
           break;
         }
-        case SH_NODE_ADD_SHADER: {
+        case SH_NODE_ADD_SHADER:
+        case SH_NODE_SET_DEPTH: {
           /* Simple passthrough node. Each original inputs will get the same weight. */
           /* TODO(fclem): Better use some kind of reroute node? */
           nodes_copy[id] = bke::node_add_static_node(nullptr, *ntree, SH_NODE_MATH);
@@ -617,12 +619,18 @@ static void ntree_shader_weight_tree_invert(bNodeTree *ntree, bNode *output_node
         bNodeSocket *tosock;
         bNode *tonode;
 
+        if (node.type_legacy == SH_NODE_SET_DEPTH && socket_index != 0) {
+          /* Socket 1 is the float View Depth input, not a closure weight branch. */
+          continue;
+        }
+
         switch (node.type_legacy) {
           case SH_NODE_SHADERTORGB:
           case SH_NODE_OUTPUT_LIGHT:
           case SH_NODE_OUTPUT_WORLD:
           case SH_NODE_OUTPUT_MATERIAL:
-          case SH_NODE_ADD_SHADER: {
+          case SH_NODE_ADD_SHADER:
+          case SH_NODE_SET_DEPTH: {
             tonode = nodes_copy[node.runtime->tmp_flag];
             tosock = ntree_shader_node_output_get(tonode, 0);
             break;
@@ -655,7 +663,8 @@ static void ntree_shader_weight_tree_invert(bNodeTree *ntree, bNode *output_node
           bNode *fromnode = sock.link->fromnode;
 
           switch (fromnode->type_legacy) {
-            case SH_NODE_ADD_SHADER: {
+            case SH_NODE_ADD_SHADER:
+            case SH_NODE_SET_DEPTH: {
               fromnode = nodes_copy[fromnode->runtime->tmp_flag];
               fromsock = ntree_shader_node_input_get(fromnode, 1);
               if (fromsock->link) {
@@ -733,6 +742,7 @@ static bool closure_node_filter(const bNode *node)
   switch (node->type_legacy) {
     case SH_NODE_ADD_SHADER:
     case SH_NODE_MIX_SHADER:
+    case SH_NODE_SET_DEPTH:
     case SH_NODE_BACKGROUND:
     case SH_NODE_BSDF_METALLIC:
     case SH_NODE_BSDF_DIFFUSE:

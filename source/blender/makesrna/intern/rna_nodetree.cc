@@ -4395,6 +4395,12 @@ static const EnumPropertyItem *rna_NodeRaycastSampleAttributeItem_data_type_item
   });
 }
 
+static bool rna_ShaderNodeLightInfo_light_object_poll(PointerRNA * /*ptr*/, const PointerRNA value)
+{
+  const Object *ob = static_cast<const Object *>(value.data);
+  return ob != nullptr && ob->type == OB_LAMP;
+}
+
 }  // namespace blender
 
 #else
@@ -5329,6 +5335,21 @@ static void def_sh_shader_info(BlenderRNA * /*brna*/, StructRNA *srna)
   RNA_def_property_ui_text(
       prop, "Light Groups", "Set light groups for this node separately");
   RNA_def_property_update(prop, NC_NODE | NA_EDITED, "rna_Node_update");
+}
+
+static void def_sh_light_info(BlenderRNA * /*brna*/, StructRNA *srna)
+{
+  PropertyRNA *prop;
+
+  prop = RNA_def_property(srna, "light_object", PROP_POINTER, PROP_NONE);
+  RNA_def_property_pointer_sdna(prop, nullptr, "id");
+  RNA_def_property_struct_type(prop, "Object");
+  RNA_def_property_pointer_funcs(
+      prop, nullptr, nullptr, nullptr, "rna_ShaderNodeLightInfo_light_object_poll");
+  RNA_def_property_flag(prop, PROP_EDITABLE | PROP_ID_REFCOUNT);
+  RNA_def_property_override_flag(prop, PROPOVERRIDE_OVERRIDABLE_LIBRARY);
+  RNA_def_property_ui_text(prop, "Light Object", "Light object to get information from");
+  RNA_def_property_update(prop, NC_NODE | NA_EDITED, "rna_Node_update_relations");
 }
 
 static void def_sh_tex(BlenderRNA * /*brna*/, StructRNA *srna)
@@ -10412,6 +10433,7 @@ static void rna_def_nodes(BlenderRNA *brna)
   define("ShaderNode", "ShaderNodeInvert");
   define("ShaderNode", "ShaderNodeLayerWeight");
   define("ShaderNode", "ShaderNodeLightFalloff");
+  define("ShaderNode", "ShaderNodeLightInfo", def_sh_light_info);
   define("ShaderNode", "ShaderNodeLightPath");
   define("ShaderNode", "ShaderNodeMapping", def_sh_mapping);
   define("ShaderNode", "ShaderNodeMapRange", def_map_range);
@@ -10439,6 +10461,7 @@ static void rna_def_nodes(BlenderRNA *brna)
   define("ShaderNode", "ShaderNodeScript", def_sh_script);
   define("ShaderNode", "ShaderNodeSeparateColor", def_sh_combsep_color);
   define("ShaderNode", "ShaderNodeSeparateXYZ");
+  define("ShaderNode", "ShaderNodeSetDepth");
   define("ShaderNode", "ShaderNodeShaderInfo", def_sh_shader_info);
   define("ShaderNode", "ShaderNodeShaderToRGB");
   define("ShaderNode", "ShaderNodeSqueeze");

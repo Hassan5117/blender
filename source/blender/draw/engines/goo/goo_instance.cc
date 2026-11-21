@@ -88,31 +88,49 @@ void Instance::begin_sync()
   material_subs_.clear();
   gpumat_subs_.clear();
   refract_subs_.clear();
+  prepass_mat_subs_.clear();
   has_refract_draws_ = false;
+  has_blend_draws_ = false;
+  has_blend_refract_draws_ = false;
   prepass_depth_ptr_ = nullptr;
   scene_color_ptr_ = nullptr;
   materials.begin_sync();
-  lights.begin_sync(world_color_);
+  lights.begin_sync(draw_ctx->scene, world_color_);
 
-  if (dummy_color_tx_.ensure_2d(
-          gpu::TextureFormat::SFLOAT_16_16_16_16, int2(1), GPU_TEXTURE_USAGE_SHADER_READ))
+  if (dummy_depth_tx_.ensure_2d(gpu::TextureFormat::SFLOAT_32_DEPTH,
+                                int2(1),
+                                GPU_TEXTURE_USAGE_SHADER_READ | GPU_TEXTURE_USAGE_ATTACHMENT))
+  {
+    dummy_depth_tx_.clear(float4(1.0f));
+  }
+  if (dummy_color_tx_.ensure_2d(gpu::TextureFormat::SFLOAT_16_16_16_16,
+                                int2(1),
+                                GPU_TEXTURE_USAGE_SHADER_READ | GPU_TEXTURE_USAGE_ATTACHMENT))
   {
     dummy_color_tx_.clear(float4(0.0f));
   }
 
   prepass_ps_.init();
-  prepass_ps_.state_set(DRW_STATE_WRITE_DEPTH | DRW_STATE_DEPTH_LESS_EQUAL | DRW_STATE_CULL_BACK);
-  prepass_ps_.shader_set(ShaderModule::get().shadow_mesh.get());
+  prepass_ps_.state_set(DRW_STATE_WRITE_DEPTH | DRW_STATE_DEPTH_LESS_EQUAL);
+  prepass_cull_sub_ = &prepass_ps_.sub("PrepassCull");
+  prepass_cull_sub_->state_set(DRW_STATE_WRITE_DEPTH | DRW_STATE_DEPTH_LESS_EQUAL |
+                               DRW_STATE_CULL_BACK);
+  prepass_cull_sub_->shader_set(ShaderModule::get().shadow_mesh.get());
+  prepass_nocull_sub_ = &prepass_ps_.sub("PrepassNoCull");
+  prepass_nocull_sub_->state_set(DRW_STATE_WRITE_DEPTH | DRW_STATE_DEPTH_LESS_EQUAL);
+  prepass_nocull_sub_->shader_set(ShaderModule::get().shadow_mesh.get());
 
   surface_ps_.init();
   surface_ps_.state_set(DRW_STATE_WRITE_COLOR | DRW_STATE_WRITE_DEPTH |
-                        DRW_STATE_DEPTH_LESS_EQUAL | DRW_STATE_CULL_BACK);
+                        DRW_STATE_DEPTH_LESS_EQUAL);
   surface_ps_.shader_set(ShaderModule::get().surface_flat.get());
   surface_ps_.push_constant("world_color", world_color_);
 
   refract_ps_.init();
   refract_ps_.state_set(DRW_STATE_WRITE_COLOR | DRW_STATE_WRITE_DEPTH |
-                        DRW_STATE_DEPTH_LESS_EQUAL | DRW_STATE_CULL_BACK);
+                        DRW_STATE_DEPTH_LESS_EQUAL);
+
+  blend_ps_.init();
 
   has_world_shader_ = false;
   World *world = draw_ctx->scene ? draw_ctx->scene->world : nullptr;
@@ -127,11 +145,15 @@ void Instance::begin_sync()
     world_ps_.bind_texture(
         GOO_SHADOW_TEX_SLOT, lights.shadow_tx_ptr(), GPUSamplerState::default_sampler());
     world_ps_.bind_texture(
+        GOO_SHADOW_ID_TEX_SLOT, lights.shadow_id_tx_ptr(), GPUSamplerState::default_sampler());
+    world_ps_.bind_texture(
         GOO_DEPTH_TEX_SLOT, &prepass_depth_ptr_, GPUSamplerState::default_sampler());
     world_ps_.bind_texture(
         GOO_SCENE_COLOR_TEX_SLOT, dummy_color_tx_, GPUSamplerState::default_sampler());
     world_ps_.push_constant("goo_light_groups", int4(0, 0, 0, 1));
     world_ps_.push_constant("goo_light_group_shadows", int4(0, 0, 0, 1));
+    world_ps_.push_constant("goo_alpha_threshold", 0.0f);
+    world_ps_.push_constant("goo_material_flags", 0);
     world_ps_.draw_procedural(GPU_PRIM_TRIS, 1, 3);
     has_world_shader_ = true;
   }
@@ -143,6 +165,11 @@ PassMain::Sub &Instance::material_sub_get(const Material *ma)
 {
   return *material_subs_.lookup_or_add_cb(ma, [&]() {
     PassMain::Sub &sub = surface_ps_.sub(ma ? ma->id.name + 2 : "Default");
+    DRWState state = DRW_STATE_WRITE_COLOR | DRW_STATE_WRITE_DEPTH | DRW_STATE_DEPTH_LESS_EQUAL;
+    if (ma && (ma->blend_flag & MA_BL_CULL_BACKFACE) != 0) {
+      state |= DRW_STATE_CULL_BACK;
+    }
+    sub.state_set(state);
     const float4 color = ma ? float4(ma->r, ma->g, ma->b, 1.0f) : float4(0.8f, 0.8f, 0.8f, 1.0f);
     sub.push_constant("base_color", color);
     return &sub;
@@ -152,16 +179,25 @@ PassMain::Sub &Instance::material_sub_get(const Material *ma)
 void Instance::configure_material_sub(PassMain::Sub &sub,
                                       Manager &manager,
                                       GPUMaterial *gpumat,
-                                      bool is_refract)
+                                      const Material *ma,
+                                      bool is_refract,
+                                      bool is_prepass)
 {
-  const Material *ma = GPU_material_get_material(gpumat);
+  const Material *mat = ma ? ma : GPU_material_get_material(gpumat);
   sub.material_set(manager, gpumat, !is_image_render_);
   sub.bind_texture(RBUFS_UTILITY_TEX_SLOT, ShaderModule::get().utility_tx);
   sub.bind_ubo(GOO_LIGHT_UBO_SLOT, lights.light_buf());
   sub.bind_ubo(GOO_SHADOW_UBO_SLOT, lights.shadow_buf());
   sub.bind_texture(
       GOO_SHADOW_TEX_SLOT, lights.shadow_tx_ptr(), GPUSamplerState::default_sampler());
-  sub.bind_texture(GOO_DEPTH_TEX_SLOT, &prepass_depth_ptr_, GPUSamplerState::default_sampler());
+  sub.bind_texture(
+      GOO_SHADOW_ID_TEX_SLOT, lights.shadow_id_tx_ptr(), GPUSamplerState::default_sampler());
+  if (is_prepass) {
+    sub.bind_texture(GOO_DEPTH_TEX_SLOT, dummy_depth_tx_, GPUSamplerState::default_sampler());
+  }
+  else {
+    sub.bind_texture(GOO_DEPTH_TEX_SLOT, &prepass_depth_ptr_, GPUSamplerState::default_sampler());
+  }
   if (is_refract) {
     sub.bind_texture(
         GOO_SCENE_COLOR_TEX_SLOT, &scene_color_ptr_, GPUSamplerState{GPU_SAMPLER_FILTERING_LINEAR});
@@ -170,36 +206,80 @@ void Instance::configure_material_sub(PassMain::Sub &sub,
     sub.bind_texture(
         GOO_SCENE_COLOR_TEX_SLOT, dummy_color_tx_, GPUSamplerState::default_sampler());
   }
-  const int4 light_groups = ma ? int4(ma->light_group_bits[0],
-                                      ma->light_group_bits[1],
-                                      ma->light_group_bits[2],
-                                      ma->light_group_bits[3]) :
-                                 int4(0, 0, 0, 1);
-  const int4 shadow_groups = ma ? int4(ma->light_group_shadow_bits[0],
-                                       ma->light_group_shadow_bits[1],
-                                       ma->light_group_shadow_bits[2],
-                                       ma->light_group_shadow_bits[3]) :
+  const int4 light_groups = mat ? int4(mat->light_group_bits[0],
+                                       mat->light_group_bits[1],
+                                       mat->light_group_bits[2],
+                                       mat->light_group_bits[3]) :
                                   int4(0, 0, 0, 1);
+  const int4 shadow_groups = mat ? int4(mat->light_group_shadow_bits[0],
+                                        mat->light_group_shadow_bits[1],
+                                        mat->light_group_shadow_bits[2],
+                                        mat->light_group_shadow_bits[3]) :
+                                   int4(0, 0, 0, 1);
+  int mat_flags = 0;
+  if (mat != nullptr) {
+    if (mat->blend_method == MA_BM_CLIP) {
+      mat_flags |= GOO_MAT_FLAG_ALPHA_CLIP;
+    }
+    else if (mat->blend_method == MA_BM_HASHED) {
+      mat_flags |= GOO_MAT_FLAG_ALPHA_HASHED;
+    }
+    else if (mat->blend_method == MA_BM_BLEND) {
+      mat_flags |= GOO_MAT_FLAG_ALPHA_BLEND;
+    }
+    if ((mat->check_shadow_id & MA_SHADOW_ID) != 0) {
+      mat_flags |= GOO_MAT_FLAG_CHECK_SHADOW_ID;
+    }
+  }
   sub.push_constant("goo_light_groups", light_groups);
   sub.push_constant("goo_light_group_shadows", shadow_groups);
+  sub.push_constant("goo_alpha_threshold", mat ? mat->alpha_threshold : 0.5f);
+  sub.push_constant("goo_material_flags", mat_flags);
 }
 
-PassMain::Sub &Instance::gpumat_sub_get(Manager &manager, GPUMaterial *gpumat)
+PassMain::Sub &Instance::gpumat_sub_get(Manager &manager, GPUMaterial *gpumat, const Material *ma)
 {
   return *gpumat_subs_.lookup_or_add_cb(gpumat, [&]() {
-    const Material *ma = GPU_material_get_material(gpumat);
-    PassMain::Sub &sub = surface_ps_.sub(ma ? ma->id.name + 2 : "Material");
-    configure_material_sub(sub, manager, gpumat, false);
+    const Material *mat = ma ? ma : GPU_material_get_material(gpumat);
+    PassMain::Sub &sub = surface_ps_.sub(mat ? mat->id.name + 2 : "Material");
+    DRWState state = DRW_STATE_WRITE_COLOR | DRW_STATE_WRITE_DEPTH | DRW_STATE_DEPTH_LESS_EQUAL;
+    if (mat && (mat->blend_flag & MA_BL_CULL_BACKFACE) != 0) {
+      state |= DRW_STATE_CULL_BACK;
+    }
+    sub.state_set(state);
+    configure_material_sub(sub, manager, gpumat, mat, false, false);
     return &sub;
   });
 }
 
-PassMain::Sub &Instance::refract_sub_get(Manager &manager, GPUMaterial *gpumat)
+PassMain::Sub &Instance::refract_sub_get(Manager &manager, GPUMaterial *gpumat, const Material *ma)
 {
   return *refract_subs_.lookup_or_add_cb(gpumat, [&]() {
-    const Material *ma = GPU_material_get_material(gpumat);
-    PassMain::Sub &sub = refract_ps_.sub(ma ? ma->id.name + 2 : "Refract");
-    configure_material_sub(sub, manager, gpumat, true);
+    const Material *mat = ma ? ma : GPU_material_get_material(gpumat);
+    PassMain::Sub &sub = refract_ps_.sub(mat ? mat->id.name + 2 : "Refract");
+    DRWState state = DRW_STATE_WRITE_COLOR | DRW_STATE_WRITE_DEPTH | DRW_STATE_DEPTH_LESS_EQUAL;
+    if (mat && (mat->blend_flag & MA_BL_CULL_BACKFACE) != 0) {
+      state |= DRW_STATE_CULL_BACK;
+    }
+    sub.state_set(state);
+    configure_material_sub(sub, manager, gpumat, mat, true, false);
+    return &sub;
+  });
+}
+
+PassMain::Sub &Instance::prepass_mat_sub_get(Manager &manager,
+                                             GPUMaterial *gpumat,
+                                             const Material *ma)
+{
+  return *prepass_mat_subs_.lookup_or_add_cb(gpumat, [&]() {
+    const Material *mat = ma ? ma : GPU_material_get_material(gpumat);
+    PassMain::Sub &sub = prepass_ps_.sub(mat ? mat->id.name + 2 : "PrepassMat");
+    DRWState state = DRW_STATE_WRITE_DEPTH | DRW_STATE_DEPTH_LESS_EQUAL;
+    if (mat && (mat->blend_flag & MA_BL_CULL_BACKFACE) != 0) {
+      state |= DRW_STATE_CULL_BACK;
+    }
+    sub.state_set(state);
+    configure_material_sub(sub, manager, gpumat, mat, false, true);
     return &sub;
   });
 }
@@ -225,7 +305,8 @@ void Instance::object_sync(ObjectRef &ob_ref, Manager &manager)
   }
 
   ResourceHandleRange handle = manager.unique_handle(ob_ref);
-  lights.caster_sync(ob, handle);
+  const bool cast_shadows = (ob->visibility_flag & OB_HIDE_SHADOW) == 0 &&
+                            lights.shadows_enabled();
 
   /* Node-tree materials. */
   const int mat_count = std::max(1, BKE_object_material_count_eval(ob));
@@ -238,31 +319,78 @@ void Instance::object_sync(ObjectRef &ob_ref, Manager &manager)
   }
 
   if (all_ready) {
-    bool has_refract = false;
-    for (int i = 0; i < mat_count; i++) {
-      if (GPU_material_flag_get(gpumats[i], GPU_MATFLAG_REFRACT)) {
-        has_refract = true;
-        break;
-      }
-    }
-    if (!has_refract) {
-      if (gpu::Batch *prepass_geom = DRW_cache_mesh_surface_get(ob)) {
-        prepass_ps_.draw(prepass_geom, handle);
-      }
-    }
-
     Span<gpu::Batch *> geoms = DRW_cache_mesh_surface_shaded_get(
         ob, Span<const GPUMaterial *>(const_cast<const GPUMaterial **>(gpumats.data()), mat_count));
+    const float sort_z = math::transform_point(View::default_get().viewmat(),
+                                               ob->object_to_world().location())
+                             .z;
+
     for (int i : geoms.index_range()) {
       if (geoms[i] == nullptr) {
         continue;
       }
-      if (GPU_material_flag_get(gpumats[i], GPU_MATFLAG_REFRACT)) {
-        refract_sub_get(manager, gpumats[i]).draw(geoms[i], handle);
-        has_refract_draws_ = true;
+      Material *ma = BKE_object_material_get_eval(ob, i + 1);
+      GPUMaterial *gpumat = gpumats[i];
+      const bool is_refract = GPU_material_flag_get(gpumat, GPU_MATFLAG_REFRACT);
+      const bool cull_back = ma && (ma->blend_flag & MA_BL_CULL_BACKFACE) != 0;
+
+      if (cast_shadows) {
+        GPUMaterial *shadow_gpumat = nullptr;
+        if (ma && ELEM(ma->blend_shadow, MA_BS_CLIP, MA_BS_HASHED)) {
+          shadow_gpumat = materials.shadow_get(ma, !is_image_render_);
+        }
+        lights.caster_slot_sync(
+            manager, geoms[i], ma, shadow_gpumat, handle, !is_image_render_);
+      }
+
+      if (ma && ma->blend_method == MA_BM_BLEND) {
+        const bool hide_backface = (ma->blend_flag & MA_BL_HIDE_BACKFACE) != 0;
+        if (hide_backface) {
+          PassMain::Sub &pre_sub = blend_ps_.sub("BlendPrepass", sort_z);
+          DRWState pre_state = DRW_STATE_WRITE_DEPTH | DRW_STATE_DEPTH_LESS_EQUAL;
+          if (cull_back) {
+            pre_state |= DRW_STATE_CULL_BACK;
+          }
+          pre_sub.state_set(pre_state);
+          pre_sub.shader_set(ShaderModule::get().shadow_mesh.get());
+          pre_sub.draw(geoms[i], handle);
+        }
+
+        PassMain::Sub &col_sub = blend_ps_.sub(ma->id.name + 2, sort_z);
+        DRWState col_state = DRW_STATE_WRITE_COLOR | DRW_STATE_BLEND_ALPHA_PREMUL;
+        col_state |= hide_backface ? DRW_STATE_DEPTH_EQUAL : DRW_STATE_DEPTH_LESS_EQUAL;
+        if (cull_back) {
+          col_state |= DRW_STATE_CULL_BACK;
+        }
+        col_sub.state_set(col_state);
+        configure_material_sub(col_sub, manager, gpumat, ma, is_refract, false);
+        col_sub.draw(geoms[i], handle);
+        has_blend_draws_ = true;
+        has_blend_refract_draws_ |= is_refract;
       }
       else {
-        gpumat_sub_get(manager, gpumats[i]).draw(geoms[i], handle);
+        if (!is_refract) {
+          if (ma && ELEM(ma->blend_method, MA_BM_CLIP, MA_BM_HASHED)) {
+            GPUMaterial *prepass_gpumat = materials.prepass_get(ma, !is_image_render_);
+            if (prepass_gpumat != nullptr) {
+              prepass_mat_sub_get(manager, prepass_gpumat, ma).draw(geoms[i], handle);
+            }
+            else {
+              (cull_back ? prepass_cull_sub_ : prepass_nocull_sub_)->draw(geoms[i], handle);
+            }
+          }
+          else {
+            (cull_back ? prepass_cull_sub_ : prepass_nocull_sub_)->draw(geoms[i], handle);
+          }
+        }
+
+        if (is_refract) {
+          refract_sub_get(manager, gpumat, ma).draw(geoms[i], handle);
+          has_refract_draws_ = true;
+        }
+        else {
+          gpumat_sub_get(manager, gpumat, ma).draw(geoms[i], handle);
+        }
       }
     }
     return;
@@ -273,8 +401,12 @@ void Instance::object_sync(ObjectRef &ob_ref, Manager &manager)
   if (geom == nullptr) {
     return;
   }
-  prepass_ps_.draw(geom, handle);
   const Material *ma = BKE_object_material_get_eval(ob, 1);
+  if (cast_shadows) {
+    lights.caster_slot_sync(manager, geom, ma, nullptr, handle, !is_image_render_);
+  }
+  const bool cull_back = ma && (ma->blend_flag & MA_BL_CULL_BACKFACE) != 0;
+  (cull_back ? prepass_cull_sub_ : prepass_nocull_sub_)->draw(geom, handle);
   material_sub_get(ma).draw(geom, handle);
 }
 
@@ -322,14 +454,22 @@ void Instance::draw_to(Manager &manager, View &view, gpu::Texture *color, gpu::T
     manager.submit(world_ps_, view);
   }
 
-  if (has_refract_draws_) {
+  if (has_refract_draws_ || has_blend_refract_draws_) {
     scene_color_tx_.acquire_2d(extent,
                                GPU_texture_format(target_color),
                                GPU_TEXTURE_USAGE_SHADER_READ | GPU_TEXTURE_USAGE_ATTACHMENT);
     GPU_texture_copy(scene_color_tx_, target_color);
     scene_color_ptr_ = scene_color_tx_;
+  }
+  if (has_refract_draws_) {
     main_fb_.bind();
     manager.submit(refract_ps_, view);
+  }
+  if (has_blend_draws_) {
+    main_fb_.bind();
+    manager.submit(blend_ps_, view);
+  }
+  if (has_refract_draws_ || has_blend_refract_draws_) {
     scene_color_tx_.release();
     scene_color_ptr_ = nullptr;
   }

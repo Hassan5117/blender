@@ -107,6 +107,13 @@ class NODE_MT_shader_node_input_base(node_add_menu.NodeMenu):
         self.node_operator_with_outputs(
             context,
             layout,
+            "ShaderNodeLightInfo",
+            ["Light Color", "Light Power", "Perceptual Power"],
+            poll=object_shader_nodes_poll(context) and goo_shader_nodes_poll(context),
+        )
+        self.node_operator_with_outputs(
+            context,
+            layout,
             "ShaderNodeLightPath",
             [
                 "Is Camera Ray",
@@ -343,6 +350,11 @@ class NODE_MT_shader_node_shader_base(node_add_menu.NodeMenu):
             "ShaderNodeBsdfTransparent",
             poll=object_material_shader_nodes_poll(context),
         )
+        self.node_operator(
+            layout,
+            "ShaderNodeSetDepth",
+            poll=object_material_shader_nodes_poll(context) and goo_shader_nodes_poll(context),
+        )
 
         layout.separator()
 
@@ -519,6 +531,50 @@ class NODE_MT_shader_node_utilities_base(node_add_menu.NodeMenu):
         self.draw_assets_for_catalog(layout, self.bl_label)
 
 
+class NODE_MT_shader_node_goo_engine_base(node_add_menu.NodeMenu):
+    bl_label = "Goo Engine"
+
+    @classmethod
+    def poll(cls, context):
+        return super().poll(context) and goo_shader_nodes_poll(context)
+
+    def draw(self, context):
+        layout = self.layout
+        is_object = object_shader_nodes_poll(context)
+        is_material = object_material_shader_nodes_poll(context)
+        self.node_operator_with_outputs(
+            context,
+            layout,
+            "ShaderNodeShaderInfo",
+            ["Diffuse Shading", "Cast Shadows", "Self Shadows", "Ambient Lighting", "Half-lambert factor"],
+            poll=is_object,
+        )
+        self.node_operator_with_outputs(
+            context,
+            layout,
+            "ShaderNodeScreenspaceInfo",
+            ["Scene Color", "Scene Depth"],
+            poll=is_object,
+        )
+        self.node_operator(
+            layout,
+            "ShaderNodeCurvature",
+            poll=is_object,
+        )
+        self.node_operator_with_outputs(
+            context,
+            layout,
+            "ShaderNodeLightInfo",
+            ["Light Color", "Light Power", "Perceptual Power"],
+            poll=is_object,
+        )
+        self.node_operator(
+            layout,
+            "ShaderNodeSetDepth",
+            poll=is_material,
+        )
+
+
 class NODE_MT_shader_node_all_base(node_add_menu.NodeMenu):
     bl_label = ""
     menu_path = "Root"
@@ -528,7 +584,6 @@ class NODE_MT_shader_node_all_base(node_add_menu.NodeMenu):
     # & Swap menus can share the same layout while each using their
     # corresponding menus
     def draw(self, context):
-        del context
         layout = self.layout
         self.draw_menu(layout, "Input")
         self.draw_menu(layout, "Output")
@@ -540,6 +595,9 @@ class NODE_MT_shader_node_all_base(node_add_menu.NodeMenu):
         self.draw_menu(layout, "Color")
         self.draw_menu(layout, "Texture")
         self.draw_menu(layout, "Utilities")
+        if goo_shader_nodes_poll(context):
+            layout.separator()
+            self.draw_menu(layout, "Goo Engine")
         layout.separator()
         self.draw_root_assets(layout)
         layout.separator()
@@ -559,6 +617,7 @@ add_menus = {
     "NODE_MT_category_shader_vector": NODE_MT_shader_node_vector_base,
     "NODE_MT_category_shader_math": NODE_MT_shader_node_math_base,
     "NODE_MT_category_shader_utilities": NODE_MT_shader_node_utilities_base,
+    "NODE_MT_category_shader_goo_engine": NODE_MT_shader_node_goo_engine_base,
     "NODE_MT_shader_node_add_all": NODE_MT_shader_node_all_base,
 }
 add_menus = node_add_menu.generate_menus(
@@ -580,6 +639,7 @@ swap_menus = {
     "NODE_MT_shader_node_vector_swap": NODE_MT_shader_node_vector_base,
     "NODE_MT_shader_node_math_swap": NODE_MT_shader_node_math_base,
     "NODE_MT_shader_node_utilities_swap": NODE_MT_shader_node_utilities_base,
+    "NODE_MT_shader_node_goo_engine_swap": NODE_MT_shader_node_goo_engine_base,
     "NODE_MT_shader_node_swap_all": NODE_MT_shader_node_all_base,
 }
 swap_menus = node_add_menu.generate_menus(

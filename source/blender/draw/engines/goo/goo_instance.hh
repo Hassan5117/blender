@@ -35,10 +35,13 @@ class Instance : public DrawEngine {
  public:
   const DRWContext *draw_ctx = nullptr;
 
-  /** Depth prepass (opaque geometry) for Curvature and ScreenspaceInfo. */
+  /** Depth prepass (opaque / clip / hashed geometry) for Curvature and ScreenspaceInfo. */
   PassMain prepass_ps_ = {"Goo.Prepass"};
+  PassMain::Sub *prepass_cull_sub_ = nullptr;
+  PassMain::Sub *prepass_nocull_sub_ = nullptr;
+  Map<GPUMaterial *, PassMain::Sub *> prepass_mat_subs_;
 
-  /** Surface pass. One sub-pass per material color. */
+  /** Surface pass. One sub-pass per material. */
   PassMain surface_ps_ = {"Goo.Surface"};
   Map<const Material *, PassMain::Sub *> material_subs_;
 
@@ -46,6 +49,11 @@ class Instance : public DrawEngine {
   PassMain refract_ps_ = {"Goo.Refract"};
   Map<GPUMaterial *, PassMain::Sub *> refract_subs_;
   bool has_refract_draws_ = false;
+
+  /** Alpha-blended pass sorted back-to-front per draw. */
+  PassSortable blend_ps_ = {"Goo.Blend"};
+  bool has_blend_draws_ = false;
+  bool has_blend_refract_draws_ = false;
 
   /** Procedural World background pass. */
   PassSimple world_ps_ = {"Goo.World"};
@@ -64,6 +72,7 @@ class Instance : public DrawEngine {
   TextureFromPool color_tx_ = {"goo.color"};
   TextureFromPool prepass_depth_tx_ = {"goo.prepass_depth"};
   TextureFromPool scene_color_tx_ = {"goo.scene_color"};
+  Texture dummy_depth_tx_ = {"goo.dummy_depth"};
   Texture dummy_color_tx_ = {"goo.dummy_color"};
   gpu::Texture *prepass_depth_ptr_ = nullptr;
   gpu::Texture *scene_color_ptr_ = nullptr;
@@ -89,12 +98,15 @@ class Instance : public DrawEngine {
 
  private:
   PassMain::Sub &material_sub_get(const Material *ma);
-  PassMain::Sub &gpumat_sub_get(Manager &manager, GPUMaterial *gpumat);
-  PassMain::Sub &refract_sub_get(Manager &manager, GPUMaterial *gpumat);
+  PassMain::Sub &gpumat_sub_get(Manager &manager, GPUMaterial *gpumat, const Material *ma);
+  PassMain::Sub &refract_sub_get(Manager &manager, GPUMaterial *gpumat, const Material *ma);
+  PassMain::Sub &prepass_mat_sub_get(Manager &manager, GPUMaterial *gpumat, const Material *ma);
   void configure_material_sub(PassMain::Sub &sub,
                               Manager &manager,
                               GPUMaterial *gpumat,
-                              bool is_refract);
+                              const Material *ma,
+                              bool is_refract,
+                              bool is_prepass);
 };
 
 }  // namespace blender::goo

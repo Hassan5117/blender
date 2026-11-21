@@ -222,18 +222,13 @@ static void rna_Material_active_paint_texture_index_update(bContext *C, PointerR
 static int rna_Material_blend_method_get(PointerRNA *ptr)
 {
   Material *material = id_cast<Material *>(ptr->owner_id);
-  switch (material->surface_render_method) {
-    case MA_SURFACE_METHOD_DEFERRED:
-      return MA_BM_HASHED;
-    case MA_SURFACE_METHOD_FORWARD:
-      return MA_BM_BLEND;
-  }
-  return MA_BM_HASHED;
+  return material->blend_method;
 }
 
 static void rna_Material_blend_method_set(PointerRNA *ptr, int new_blend_method)
 {
   Material *material = id_cast<Material *>(ptr->owner_id);
+  material->blend_method = eMaterial_BlendMethod(new_blend_method);
   switch (new_blend_method) {
     case MA_BM_SOLID:
     case MA_BM_CLIP:
@@ -244,6 +239,14 @@ static void rna_Material_blend_method_set(PointerRNA *ptr, int new_blend_method)
       material->surface_render_method = MA_SURFACE_METHOD_FORWARD;
       break;
   }
+}
+
+static void rna_Material_shadow_method_set(PointerRNA *ptr, int new_shadow_method)
+{
+  Material *material = id_cast<Material *>(ptr->owner_id);
+  material->blend_shadow = eMaterial_BlendShadow(new_shadow_method);
+  SET_FLAG_FROM_TEST(
+      material->blend_flag, ELEM(new_shadow_method, MA_BS_CLIP, MA_BS_HASHED), MA_BL_TRANSPARENT_SHADOW);
 }
 
 static void rna_Material_render_method_set(PointerRNA *ptr, int new_render_method)
@@ -1035,6 +1038,22 @@ void RNA_def_material(BlenderRNA *brna)
        "Render polygon transparent, depending on alpha channel of the texture"},
       {0, nullptr, 0, nullptr, nullptr},
   };
+
+  static const EnumPropertyItem prop_eevee_shadow_items[] = {
+      {MA_BS_NONE, "NONE", 0, "None", "Material will cast no shadow"},
+      {MA_BS_SOLID, "OPAQUE", 0, "Opaque", "Material will cast opaque shadows"},
+      {MA_BS_CLIP,
+       "CLIP",
+       0,
+       "Alpha Clip",
+       "Use the alpha threshold to clip the shadow visibility (binary visibility)"},
+      {MA_BS_HASHED,
+       "HASHED",
+       0,
+       "Alpha Hashed",
+       "Use noise to dither the binary shadow visibility (works well with multi-samples)"},
+      {0, nullptr, 0, nullptr, nullptr},
+  };
 #  endif
 
   static const EnumPropertyItem prop_eevee_surface_render_method_items[] = {
@@ -1247,6 +1266,19 @@ void RNA_def_material(BlenderRNA *brna)
   RNA_def_property_array(prop, 4);
   RNA_def_property_ui_text(prop, "Light Group Shadows", "Light group shadow bitfield");
   RNA_def_property_clear_flag(prop, PROP_ANIMATABLE);
+  RNA_def_property_update(prop, 0, "rna_Material_draw_update");
+
+  prop = RNA_def_property(srna, "shadow_method", PROP_ENUM, PROP_NONE);
+  RNA_def_property_enum_sdna(prop, nullptr, "blend_shadow");
+  RNA_def_property_enum_items(prop, prop_eevee_shadow_items);
+  RNA_def_property_ui_text(prop, "Shadow Mode", "Shadow mapping method for Goo Engine");
+  RNA_def_property_enum_funcs(prop, nullptr, "rna_Material_shadow_method_set", nullptr);
+  RNA_def_property_update(prop, 0, "rna_Material_draw_update");
+
+  prop = RNA_def_property(srna, "check_shadow_id", PROP_BOOLEAN, PROP_NONE);
+  RNA_def_property_boolean_sdna(prop, nullptr, "check_shadow_id", MA_SHADOW_ID);
+  RNA_def_property_boolean_default(prop, false);
+  RNA_def_property_ui_text(prop, "Check Self Shadowing", "Filter shadows cast by this Object");
   RNA_def_property_update(prop, 0, "rna_Material_draw_update");
 
   /* For Preview Render */

@@ -210,6 +210,11 @@ enum eMaterial_BlendShadow : char {
   MA_BS_HASHED = 3,
 };
 
+/** #Material::check_shadow_id (Goo Engine) */
+enum {
+  MA_SHADOW_ID = (1 << 0),
+};
+
 /** #Material::displacement_method */
 enum eMaterial_DisplacementMethod : char {
   MA_DISPLACEMENT_BUMP = 0,
@@ -444,9 +449,10 @@ struct Material {
   /* Displacement. */
   float inflate_bounds = 0;
 
-  char _pad3[4] = {};
+  /* Goo Engine self-shadow filtering and light groups (bit 0 of word 3 is default group 0). */
+  char check_shadow_id = 0;
+  char _pad3[3] = {};
 
-  /* Goo Engine light groups (bit 0 of word 3 is default group 0). */
   int light_group_bits[4] = {0, 0, 0, 1};
   int light_group_shadow_bits[4] = {0, 0, 0, 1};
 

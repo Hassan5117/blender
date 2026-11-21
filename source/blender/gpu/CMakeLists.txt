@@ -669,6 +669,7 @@ set(GLSL_SRC
   shaders/material/gpu_shader_material_invert_rotation.glsl
   shaders/material/gpu_shader_material_layer_weight.glsl
   shaders/material/gpu_shader_material_light_falloff.glsl
+  shaders/material/gpu_shader_material_light_info.glsl
   shaders/material/gpu_shader_material_light_path.glsl
   shaders/material/gpu_shader_material_mapping.glsl
   shaders/material/gpu_shader_material_map_range.glsl
@@ -703,6 +704,7 @@ set(GLSL_SRC
   shaders/material/gpu_shader_material_separate_color.glsl
   shaders/material/gpu_shader_material_separate_xyz.glsl
   shaders/material/gpu_shader_material_set.glsl
+  shaders/material/gpu_shader_material_set_depth.glsl
   shaders/material/gpu_shader_material_shader_info.glsl
   shaders/material/gpu_shader_material_shader_to_rgba.glsl
   shaders/material/gpu_shader_material_sheen.glsl

@@ -10,10 +10,12 @@
 
 #pragma once
 
+#include "BLI_map.hh"
 #include "BLI_vector.hh"
 
 #include "DRW_gpu_wrapper.hh"
 #include "DRW_render.hh"
+#include "GPU_material.hh"
 #include "draw_manager.hh"
 #include "draw_pass.hh"
 #include "draw_view.hh"
@@ -21,7 +23,9 @@
 #include "goo_shader_shared.hh"
 
 namespace blender {
+struct Material;
 struct Object;
+struct Scene;
 }
 
 namespace blender::goo {
@@ -40,19 +44,40 @@ class LightModule {
   UniformBuffer<GooShadowBlock> shadow_buf_ = {"GooShadowBlock"};
 
   Texture shadow_tx_ = {"goo.shadow_atlas"};
+  Texture shadow_id_tx_ = {"goo.shadow_id_atlas"};
+  Texture dummy_shadow_depth_tx_ = {"goo.dummy_shadow_depth"};
+  Texture dummy_shadow_id_tx_ = {"goo.dummy_shadow_id"};
+  Texture dummy_depth_tx_ = {"goo.light_dummy_depth"};
+  Texture dummy_color_tx_ = {"goo.light_dummy_color"};
+
   Framebuffer shadow_fb_ = {"goo.shadow_fb"};
   View shadow_view_ = {"goo.shadow_view"};
   PassMain shadow_ps_ = {"Goo.Shadow"};
+  PassMain::Sub *shadow_cull_sub_ = nullptr;
+  PassMain::Sub *shadow_nocull_sub_ = nullptr;
+  Map<GPUMaterial *, PassMain::Sub *> shadow_mat_subs_;
 
+  bool use_shadows_ = true;
+  int shadow_res_ = GOO_SHADOW_RES;
   Vector<ShadowRenderSlice> render_slices_;
 
+  PassMain::Sub &shadow_mat_sub_get(Manager &manager,
+                                    const Material *ma,
+                                    GPUMaterial *shadow_gpumat,
+                                    bool deferred);
+
  public:
-  void begin_sync(float4 world_ambient);
-  void caster_sync(Object *ob, ResourceHandleRange handle);
+  void begin_sync(const Scene *scene, float4 world_ambient);
+  void caster_slot_sync(Manager &manager,
+                        gpu::Batch *geom,
+                        const Material *ma,
+                        GPUMaterial *shadow_gpumat,
+                        ResourceHandleRange handle,
+                        bool deferred);
   void light_sync(Object *ob, const View &camera_view);
   void end_sync();
 
-  /** Render all shadow slices into `shadow_tx_`. Must run before binding `main_fb_`. */
+  /** Render all shadow slices into `shadow_tx_` and `shadow_id_tx_`. */
   void render_shadows(Manager &manager);
 
   gpu::UniformBuf *light_buf()
@@ -66,6 +91,14 @@ class LightModule {
   gpu::Texture **shadow_tx_ptr()
   {
     return &shadow_tx_;
+  }
+  gpu::Texture **shadow_id_tx_ptr()
+  {
+    return &shadow_id_tx_;
+  }
+  bool shadows_enabled() const
+  {
+    return use_shadows_;
   }
 };
 

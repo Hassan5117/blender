@@ -37,8 +37,35 @@ void main()
 
   fragment_displacement();
 
+  g_goo_frag_depth = gl_FragCoord.z;
+  g_goo_frag_depth_set = false;
+
   nodetree_surface(0.5f);
 
   float alpha = saturate(1.0f - reduce_add(g_goo_transmittance) * (1.0f / 3.0f));
-  out_color = float4(g_goo_radiance, alpha);
+
+  if ((goo_material_flags & GOO_MAT_FLAG_ALPHA_CLIP) != 0) {
+    if (alpha <= goo_alpha_threshold) {
+      discard;
+    }
+    out_color = float4(g_goo_radiance / max(alpha, 1e-4f), 1.0f);
+  }
+  else if ((goo_material_flags & GOO_MAT_FLAG_ALPHA_HASHED) != 0) {
+    if (alpha < goo_hashed_alpha_threshold(g_data.P)) {
+      discard;
+    }
+    out_color = float4(g_goo_radiance / max(alpha, 1e-4f), 1.0f);
+  }
+  else if ((goo_material_flags & GOO_MAT_FLAG_ALPHA_BLEND) != 0) {
+    out_color = float4(g_goo_radiance, alpha);
+  }
+  else {
+    out_color = float4(g_goo_radiance, 1.0f);
+  }
+
+#ifdef GOO_USE_SET_DEPTH
+  if (g_goo_frag_depth_set) {
+    gl_FragDepth = g_goo_frag_depth;
+  }
+#endif
 }

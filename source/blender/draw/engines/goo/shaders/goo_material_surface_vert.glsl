@@ -16,6 +16,7 @@ VERTEX_SHADER_CREATE_INFO(goo_material_surface_mesh)
 
 void main()
 {
+  drw_ResourceID_iface.resource_id = drw_resource_id_raw();
   interp.P = drw_point_object_to_world(pos);
   interp.N = normalize(drw_normal_object_to_world(nor));
 

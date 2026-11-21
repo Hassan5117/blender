@@ -21,3 +21,8 @@ ObjectInfos object_infos_get()
 {
   return drw_object_infos();
 }
+
+uint goo_resource_id_get()
+{
+  return drw_resource_id() + 1u;
+}

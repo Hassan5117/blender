@@ -39,6 +39,11 @@ ObjectInfos object_infos_get()
   return info;
 }
 
+uint goo_resource_id_get()
+{
+  return 0u;
+}
+
 float3 attr_load_orco(WorldPoint point, float4 /*orco*/, int /*index*/)
 {
   return point.lP;

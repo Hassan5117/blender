@@ -34,6 +34,8 @@ namespace blender::goo {
 enum eGooMaterialVariant : uint64_t {
   GOO_MAT_SURFACE_MESH = 1 << 0,
   GOO_MAT_WORLD = 1 << 1,
+  GOO_MAT_PREPASS_MESH = 1 << 2,
+  GOO_MAT_SHADOW_MESH = 1 << 3,
 };
 
 namespace {
@@ -146,7 +148,10 @@ static void codegen_callback(void * /*thunk*/, GPUMaterial *gpumat, GPUCodegenOu
 
   GPUCodegenOutput &codegen = *codegen_;
   ShaderCreateInfo &info = *reinterpret_cast<ShaderCreateInfo *>(codegen.create_info);
-  const bool is_world = (GPU_material_uuid_get(gpumat) & GOO_MAT_WORLD) != 0;
+  const uint64_t uuid = GPU_material_uuid_get(gpumat);
+  const bool is_world = (uuid & GOO_MAT_WORLD) != 0;
+  const bool is_prepass = (uuid & GOO_MAT_PREPASS_MESH) != 0;
+  const bool is_shadow = (uuid & GOO_MAT_SHADOW_MESH) != 0;
 
   /* WORKAROUND (same as EEVEE): object attributes come from the draw manager SSBO. */
   if (GPU_material_uniform_attributes(gpumat) != nullptr) {
@@ -170,8 +175,18 @@ static void codegen_callback(void * /*thunk*/, GPUMaterial *gpumat, GPUCodegenOu
     info.define("MAT_GEOM_WORLD");
     info.additional_info("goo_material_world");
   }
+  else if (is_prepass) {
+    info.additional_info("goo_material_prepass_mesh");
+  }
+  else if (is_shadow) {
+    info.additional_info("goo_material_shadow_mesh");
+  }
   else {
     info.additional_info("goo_material_surface_mesh");
+    if (GPU_material_flag_get(gpumat, GPU_MATFLAG_SET_DEPTH)) {
+      info.define("GOO_USE_SET_DEPTH");
+      info.depth_write(DepthWrite::ANY);
+    }
   }
   info.define("GOO_ENGINE");
 
@@ -381,7 +396,10 @@ GPUMaterial *MaterialModule::world_get(World *wo, bool deferred_compilation)
   }
 }
 
-GPUMaterial *MaterialModule::surface_get(Material *ma, bool deferred_compilation)
+static GPUMaterial *material_variant_get(Material *ma,
+                                         uint64_t variant,
+                                         bool deferred_compilation,
+                                         int &r_queued_count)
 {
   Material *mat = ma ? ma : BKE_material_default_surface();
   bNodeTree *ntree = mat->nodetree ? mat->nodetree : BKE_material_default_surface()->nodetree;
@@ -391,7 +409,7 @@ GPUMaterial *MaterialModule::surface_get(Material *ma, bool deferred_compilation
                                                                     &mat->gpumaterial,
                                                                     mat->id.name,
                                                                     GPU_MAT_GOO,
-                                                                    GOO_MAT_SURFACE_MESH,
+                                                                    variant,
                                                                     deferred_compilation,
                                                                     codegen_callback,
                                                                     nullptr);
@@ -403,12 +421,27 @@ GPUMaterial *MaterialModule::surface_get(Material *ma, bool deferred_compilation
     case GPU_MAT_SUCCESS:
       return gpumat;
     case GPU_MAT_QUEUED:
-      queued_count++;
+      r_queued_count++;
       return nullptr;
     case GPU_MAT_FAILED:
     default:
       return nullptr;
   }
+}
+
+GPUMaterial *MaterialModule::surface_get(Material *ma, bool deferred_compilation)
+{
+  return material_variant_get(ma, GOO_MAT_SURFACE_MESH, deferred_compilation, queued_count);
+}
+
+GPUMaterial *MaterialModule::prepass_get(Material *ma, bool deferred_compilation)
+{
+  return material_variant_get(ma, GOO_MAT_PREPASS_MESH, deferred_compilation, queued_count);
+}
+
+GPUMaterial *MaterialModule::shadow_get(Material *ma, bool deferred_compilation)
+{
+  return material_variant_get(ma, GOO_MAT_SHADOW_MESH, deferred_compilation, queued_count);
 }
 
 }  // namespace blender::goo

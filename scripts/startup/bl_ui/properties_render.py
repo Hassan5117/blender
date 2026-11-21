@@ -1224,9 +1224,36 @@ class RENDER_PT_goo_bloom(RenderButtonsPanel, Panel):
         col.prop(props, "bloom_clamp")
 
 
+class RENDER_PT_goo_shadows(RenderButtonsPanel, Panel):
+    bl_label = "Shadows"
+    bl_options = {'DEFAULT_CLOSED'}
+    COMPAT_ENGINES = {'GOO_ENGINE'}
+
+    @classmethod
+    def poll(cls, context):
+        return (context.engine in cls.COMPAT_ENGINES)
+
+    def draw_header(self, context):
+        scene = context.scene
+        props = scene.eevee
+        self.layout.prop(props, "use_shadows", text="")
+
+    def draw(self, context):
+        layout = self.layout
+        layout.use_property_split = True
+
+        scene = context.scene
+        props = scene.eevee
+
+        layout.active = props.use_shadows
+        col = layout.column()
+        col.prop(props, "shadow_resolution_scale", text="Resolution Scale")
+
+
 classes = (
     RENDER_PT_context,
     RENDER_PT_goo_bloom,
+    RENDER_PT_goo_shadows,
     RENDER_PT_eevee_sampling,
     RENDER_PT_eevee_sampling_viewport,
     RENDER_PT_eevee_sampling_render,

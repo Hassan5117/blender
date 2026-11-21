@@ -772,6 +772,8 @@ set(GLSL_SRC
   engines/goo/shaders/goo_attributes_world_lib.glsl
   engines/goo/shaders/goo_effect_bloom_frag.glsl
   engines/goo/shaders/goo_geom_types_lib.glsl
+  engines/goo/shaders/goo_material_prepass_frag.glsl
+  engines/goo/shaders/goo_material_shadow_frag.glsl
   engines/goo/shaders/goo_material_surface_frag.glsl
   engines/goo/shaders/goo_material_surface_vert.glsl
   engines/goo/shaders/goo_material_world_frag.glsl
@@ -782,6 +784,8 @@ set(GLSL_SRC
   engines/goo/shaders/goo_nodetree_vert_lib.glsl
   engines/goo/shaders/goo_object_lib.glsl
   engines/goo/shaders/goo_shadow_frag.glsl
+  engines/goo/shaders/goo_shadow_id_frag.glsl
+  engines/goo/shaders/goo_shadow_id_vert.glsl
   engines/goo/shaders/goo_shadow_vert.glsl
   engines/goo/shaders/goo_surface_flat_frag.glsl
   engines/goo/shaders/goo_surface_flat_vert.glsl

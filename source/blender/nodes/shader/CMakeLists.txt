@@ -58,6 +58,7 @@ set(SRC
   nodes/node_shader_invert.cc
   nodes/node_shader_layer_weight.cc
   nodes/node_shader_light_falloff.cc
+  nodes/node_shader_light_info.cc
   nodes/node_shader_light_path.cc
   nodes/node_shader_map_range.cc
   nodes/node_shader_mapping.cc
@@ -83,6 +84,7 @@ set(SRC
   nodes/node_shader_script.cc
   nodes/node_shader_sepcomb_color.cc
   nodes/node_shader_sepcomb_xyz.cc
+  nodes/node_shader_set_depth.cc
   nodes/node_shader_shader_info.cc
   nodes/node_shader_shader_to_rgb.cc
   nodes/node_shader_squeeze.cc

@@ -352,6 +352,37 @@ class EEVEE_MATERIAL_PT_settings_volume(MaterialButtonsPanel, Panel):
         draw_material_volume_settings(layout, mat)
 
 
+class GOO_MATERIAL_PT_settings(MaterialButtonsPanel, Panel):
+    bl_label = "Settings"
+    bl_context = "material"
+    COMPAT_ENGINES = {'GOO_ENGINE'}
+
+    def draw(self, context):
+        layout = self.layout
+        layout.use_property_split = True
+        layout.use_property_decorate = False
+
+        mat = context.material
+
+        col = layout.column(heading="Backface Culling")
+        col.prop(mat, "use_backface_culling", text="Camera")
+        col.prop(mat, "use_backface_culling_shadow", text="Shadow")
+
+        layout.prop(mat, "blend_method")
+        layout.prop(mat, "shadow_method")
+        layout.prop(mat, "check_shadow_id")
+
+        row = layout.row()
+        row.active = ((mat.blend_method == 'CLIP') or (mat.shadow_method == 'CLIP'))
+        row.prop(mat, "alpha_threshold")
+
+        if mat.blend_method == 'BLEND':
+            layout.prop(mat, "show_transparent_back")
+
+        layout.prop(mat, "displacement_method")
+        layout.prop(mat, "pass_index")
+
+
 class MATERIAL_PT_viewport(MaterialButtonsPanel, Panel):
     bl_label = "Viewport Display"
     bl_context = "material"
@@ -449,6 +480,7 @@ classes = (
     EEVEE_MATERIAL_PT_settings,
     EEVEE_MATERIAL_PT_settings_surface,
     EEVEE_MATERIAL_PT_settings_volume,
+    GOO_MATERIAL_PT_settings,
     MATERIAL_PT_lineart,
     MATERIAL_PT_viewport,
     EEVEE_MATERIAL_PT_viewport_settings,

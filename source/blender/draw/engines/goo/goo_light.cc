@@ -15,13 +15,18 @@
 #include "BLI_math_vector.hh"
 
 #include "DNA_light_types.h"
+#include "DNA_material_types.h"
 #include "DNA_object_types.h"
+#include "DNA_scene_types.h"
 
 #include "GPU_framebuffer.hh"
 #include "GPU_texture.hh"
 
 #include "draw_cache.hh"
 
+#include "../eevee/eevee_defines.hh"
+
+#include "goo_defines.hh"
 #include "goo_light.hh"
 #include "goo_shader.hh"
 
@@ -50,37 +55,146 @@ static float4x4 make_view_matrix(const float3 &axis_x,
   return v;
 }
 
-void LightModule::begin_sync(float4 world_ambient)
+void LightModule::begin_sync(const Scene *scene, float4 world_ambient)
 {
   light_buf_.light_count = 0;
   light_buf_.shadow_slice_count = 0;
   light_buf_.world_ambient = world_ambient;
   render_slices_.clear();
+  shadow_mat_subs_.clear();
 
-  /* Ensure at least 1 layer exists before passes bind `&shadow_tx_`. */
-  if (shadow_tx_.gpu_texture() == nullptr) {
-    shadow_tx_.ensure_2d_array(gpu::TextureFormat::SFLOAT_32_DEPTH,
-                               int2(GOO_SHADOW_RES),
-                               1,
-                               GPU_TEXTURE_USAGE_SHADER_READ | GPU_TEXTURE_USAGE_ATTACHMENT);
+  use_shadows_ = (scene == nullptr) || ((scene->eevee.flag & SCE_EEVEE_SHADOW_ENABLED) != 0);
+  const float scale = scene ? scene->eevee.shadow_resolution_scale : 1.0f;
+  shadow_res_ = std::clamp(int(std::lround(float(GOO_SHADOW_RES) * scale)), 256, 4096);
+
+  const int cur_layers = shadow_tx_.gpu_texture() ? std::max(1, GPU_texture_depth(shadow_tx_)) : 1;
+  if (shadow_tx_.ensure_2d_array(gpu::TextureFormat::SFLOAT_32_DEPTH,
+                                 int2(shadow_res_),
+                                 cur_layers,
+                                 GPU_TEXTURE_USAGE_SHADER_READ | GPU_TEXTURE_USAGE_ATTACHMENT))
+  {
+    shadow_tx_.clear(float4(1.0f));
+  }
+  const int cur_id_layers = shadow_id_tx_.gpu_texture() ?
+                                std::max(1, GPU_texture_depth(shadow_id_tx_)) :
+                                1;
+  if (shadow_id_tx_.ensure_2d_array(gpu::TextureFormat::UINT_32,
+                                    int2(shadow_res_),
+                                    cur_id_layers,
+                                    GPU_TEXTURE_USAGE_SHADER_READ | GPU_TEXTURE_USAGE_ATTACHMENT))
+  {
+    shadow_id_tx_.clear(uint4(0u));
+  }
+
+  /* 1x1 dummy textures bound on material-evaluated shadow shaders to avoid Metal read/write hazards. */
+  if (dummy_shadow_depth_tx_.ensure_2d_array(
+          gpu::TextureFormat::SFLOAT_32_DEPTH,
+          int2(1),
+          1,
+          GPU_TEXTURE_USAGE_SHADER_READ | GPU_TEXTURE_USAGE_ATTACHMENT))
+  {
+    dummy_shadow_depth_tx_.clear(float4(1.0f));
+  }
+  if (dummy_shadow_id_tx_.ensure_2d_array(
+          gpu::TextureFormat::UINT_32,
+          int2(1),
+          1,
+          GPU_TEXTURE_USAGE_SHADER_READ | GPU_TEXTURE_USAGE_ATTACHMENT))
+  {
+    dummy_shadow_id_tx_.clear(uint4(0u));
+  }
+  if (dummy_depth_tx_.ensure_2d(gpu::TextureFormat::SFLOAT_32_DEPTH,
+                                int2(1),
+                                GPU_TEXTURE_USAGE_SHADER_READ | GPU_TEXTURE_USAGE_ATTACHMENT))
+  {
+    dummy_depth_tx_.clear(float4(1.0f));
+  }
+  if (dummy_color_tx_.ensure_2d(gpu::TextureFormat::SFLOAT_16_16_16_16,
+                                int2(1),
+                                GPU_TEXTURE_USAGE_SHADER_READ | GPU_TEXTURE_USAGE_ATTACHMENT))
+  {
+    dummy_color_tx_.clear(float4(0.0f));
   }
 
   shadow_ps_.init();
-  /* No backface culling so single-sided planes / open meshes still cast shadows. */
-  shadow_ps_.state_set(DRW_STATE_WRITE_DEPTH | DRW_STATE_DEPTH_LESS_EQUAL);
-  shadow_ps_.shader_set(ShaderModule::get().shadow_mesh.get());
+  shadow_ps_.state_set(DRW_STATE_WRITE_COLOR | DRW_STATE_WRITE_DEPTH | DRW_STATE_DEPTH_LESS_EQUAL);
+
+  shadow_cull_sub_ = &shadow_ps_.sub("ShadowCull");
+  shadow_cull_sub_->state_set(DRW_STATE_WRITE_COLOR | DRW_STATE_WRITE_DEPTH |
+                              DRW_STATE_DEPTH_LESS_EQUAL | DRW_STATE_CULL_BACK);
+  shadow_cull_sub_->shader_set(ShaderModule::get().shadow_id_mesh.get());
+
+  shadow_nocull_sub_ = &shadow_ps_.sub("ShadowNoCull");
+  shadow_nocull_sub_->state_set(DRW_STATE_WRITE_COLOR | DRW_STATE_WRITE_DEPTH |
+                                DRW_STATE_DEPTH_LESS_EQUAL);
+  shadow_nocull_sub_->shader_set(ShaderModule::get().shadow_id_mesh.get());
 }
 
-void LightModule::caster_sync(Object *ob, ResourceHandleRange handle)
+PassMain::Sub &LightModule::shadow_mat_sub_get(Manager &manager,
+                                               const Material *ma,
+                                               GPUMaterial *shadow_gpumat,
+                                               bool deferred)
 {
-  if ((ob->visibility_flag & OB_HIDE_SHADOW) != 0) {
+  return *shadow_mat_subs_.lookup_or_add_cb(shadow_gpumat, [&]() {
+    PassMain::Sub &sub = shadow_ps_.sub(ma ? ma->id.name + 2 : "ShadowMat");
+    const bool cull_back = ma && (ma->blend_flag & MA_BL_CULL_BACKFACE_SHADOW) != 0;
+    DRWState state = DRW_STATE_WRITE_COLOR | DRW_STATE_WRITE_DEPTH | DRW_STATE_DEPTH_LESS_EQUAL;
+    if (cull_back) {
+      state |= DRW_STATE_CULL_BACK;
+    }
+    sub.state_set(state);
+    sub.material_set(manager, shadow_gpumat, deferred);
+    sub.bind_texture(RBUFS_UTILITY_TEX_SLOT, ShaderModule::get().utility_tx);
+    sub.bind_ubo(GOO_LIGHT_UBO_SLOT, light_buf_);
+    sub.bind_ubo(GOO_SHADOW_UBO_SLOT, shadow_buf_);
+    sub.bind_texture(
+        GOO_SHADOW_TEX_SLOT, dummy_shadow_depth_tx_, GPUSamplerState::default_sampler());
+    sub.bind_texture(
+        GOO_SHADOW_ID_TEX_SLOT, dummy_shadow_id_tx_, GPUSamplerState::default_sampler());
+    sub.bind_texture(GOO_DEPTH_TEX_SLOT, dummy_depth_tx_, GPUSamplerState::default_sampler());
+    sub.bind_texture(GOO_SCENE_COLOR_TEX_SLOT, dummy_color_tx_, GPUSamplerState::default_sampler());
+
+    const int4 light_groups = ma ? int4(ma->light_group_bits[0],
+                                        ma->light_group_bits[1],
+                                        ma->light_group_bits[2],
+                                        ma->light_group_bits[3]) :
+                                   int4(0, 0, 0, 1);
+    const int4 shadow_groups = ma ? int4(ma->light_group_shadow_bits[0],
+                                         ma->light_group_shadow_bits[1],
+                                         ma->light_group_shadow_bits[2],
+                                         ma->light_group_shadow_bits[3]) :
+                                    int4(0, 0, 0, 1);
+    const int mat_flags = (ma && ma->blend_shadow == MA_BS_CLIP) ? GOO_MAT_FLAG_ALPHA_CLIP :
+                                                                   GOO_MAT_FLAG_ALPHA_HASHED;
+    sub.push_constant("goo_light_groups", light_groups);
+    sub.push_constant("goo_light_group_shadows", shadow_groups);
+    sub.push_constant("goo_alpha_threshold", ma ? ma->alpha_threshold : 0.5f);
+    sub.push_constant("goo_material_flags", mat_flags);
+    return &sub;
+  });
+}
+
+void LightModule::caster_slot_sync(Manager &manager,
+                                   gpu::Batch *geom,
+                                   const Material *ma,
+                                   GPUMaterial *shadow_gpumat,
+                                   ResourceHandleRange handle,
+                                   bool deferred)
+{
+  if (!use_shadows_ || geom == nullptr) {
     return;
   }
-  gpu::Batch *geom = DRW_cache_mesh_surface_get(ob);
-  if (geom == nullptr) {
+  const int shadow_mode = ma ? int(ma->blend_shadow) : int(MA_BS_SOLID);
+  if (shadow_mode == MA_BS_NONE) {
     return;
   }
-  shadow_ps_.draw(geom, handle);
+  if (ELEM(shadow_mode, MA_BS_CLIP, MA_BS_HASHED) && shadow_gpumat != nullptr) {
+    shadow_mat_sub_get(manager, ma, shadow_gpumat, deferred).draw(geom, handle);
+    return;
+  }
+  const bool cull_back = ma && (ma->blend_flag & MA_BL_CULL_BACKFACE_SHADOW) != 0;
+  PassMain::Sub *sub = cull_back ? shadow_cull_sub_ : shadow_nocull_sub_;
+  sub->draw(geom, handle);
 }
 
 void LightModule::light_sync(Object *ob, const View &camera_view)
@@ -118,7 +232,7 @@ void LightModule::light_sync(Object *ob, const View &camera_view)
 
   const float3 pos = obmat.location();
   const float3 fwd = -math::normalize(float3(obmat.z_axis()));
-  const bool cast_shadow = (la.mode & LA_SHADOW) != 0;
+  const bool cast_shadow = use_shadows_ && ((la.mode & LA_SHADOW) != 0);
 
   switch (la.type) {
     case LA_SUN: {
@@ -150,7 +264,7 @@ void LightModule::light_sync(Object *ob, const View &camera_view)
                                          0.0f;
             float3 focus = cam_pos + cam_look * focus_dist;
             /* Snap focus to shadow texels to prevent edge swimming. */
-            const float texel_world = (2.0f * r) / float(GOO_SHADOW_RES);
+            const float texel_world = (2.0f * r) / float(shadow_res_);
             float fx = std::floor(math::dot(focus, axis_x) / texel_world) * texel_world;
             float fy = std::floor(math::dot(focus, axis_y) / texel_world) * texel_world;
             float fz = math::dot(focus, axis_z);
@@ -167,7 +281,7 @@ void LightModule::light_sync(Object *ob, const View &camera_view)
             const int layer = light_buf_.shadow_slice_count++;
             GooShadowSlice &slice = shadow_buf_.slices[layer];
             slice.vp = winmat * viewmat;
-            slice.params = float4(texel_world * 1.5f, 0.0005f, 0.0f, 1.0f / float(GOO_SHADOW_RES));
+            slice.params = float4(texel_world * 1.5f, 0.0005f, 0.0f, 1.0f / float(shadow_res_));
             render_slices_.append({layer, viewmat, winmat});
           }
         }
@@ -200,7 +314,7 @@ void LightModule::light_sync(Object *ob, const View &camera_view)
 
         GooShadowSlice &slice = shadow_buf_.slices[layer];
         slice.vp = winmat * viewmat;
-        slice.params = float4(0.02f, 0.0005f, 0.0f, 1.0f / float(GOO_SHADOW_RES));
+        slice.params = float4(0.02f, 0.0005f, 0.0f, 1.0f / float(shadow_res_));
         render_slices_.append({layer, viewmat, winmat});
       }
       break;
@@ -247,7 +361,7 @@ void LightModule::light_sync(Object *ob, const View &camera_view)
           const int layer = light_buf_.shadow_slice_count++;
           GooShadowSlice &slice = shadow_buf_.slices[layer];
           slice.vp = winmat * viewmat;
-          slice.params = float4(0.025f, 0.001f, 0.0f, 1.0f / float(GOO_SHADOW_RES));
+          slice.params = float4(0.025f, 0.001f, 0.0f, 1.0f / float(shadow_res_));
           render_slices_.append({layer, viewmat, winmat});
         }
       }
@@ -270,15 +384,20 @@ void LightModule::render_shadows(Manager &manager)
 
   const int needed_layers = std::max(1, light_buf_.shadow_slice_count);
   shadow_tx_.ensure_2d_array(gpu::TextureFormat::SFLOAT_32_DEPTH,
-                             int2(GOO_SHADOW_RES),
+                             int2(shadow_res_),
                              needed_layers,
                              GPU_TEXTURE_USAGE_SHADER_READ | GPU_TEXTURE_USAGE_ATTACHMENT);
+  shadow_id_tx_.ensure_2d_array(gpu::TextureFormat::UINT_32,
+                                int2(shadow_res_),
+                                needed_layers,
+                                GPU_TEXTURE_USAGE_SHADER_READ | GPU_TEXTURE_USAGE_ATTACHMENT);
 
   shadow_view_.visibility_test(false);
   for (const ShadowRenderSlice &slice : render_slices_) {
-    shadow_fb_.ensure(GPU_ATTACHMENT_TEXTURE_LAYER(shadow_tx_, slice.layer));
+    shadow_fb_.ensure(GPU_ATTACHMENT_TEXTURE_LAYER(shadow_tx_, slice.layer),
+                      GPU_ATTACHMENT_TEXTURE_LAYER(shadow_id_tx_, slice.layer));
     shadow_fb_.bind();
-    shadow_fb_.clear_depth(1.0f);
+    GPU_framebuffer_clear_color_depth(shadow_fb_, double4(0.0), 1.0f);
     shadow_view_.sync(slice.viewmat, slice.winmat);
     manager.submit(shadow_ps_, shadow_view_);
   }
