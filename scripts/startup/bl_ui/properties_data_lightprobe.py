@@ -23,7 +23,8 @@ class DATA_PT_context_lightprobe(DataButtonsPanel, Panel):
     bl_options = {'HIDE_HEADER'}
     COMPAT_ENGINES = {
         'BLENDER_RENDER',
-        'BLENDER_EEVEE'
+        'BLENDER_EEVEE',
+        'GOO_ENGINE',
     }
 
     def draw(self, context):
@@ -88,7 +89,7 @@ class DATA_PT_lightprobe(DataButtonsPanel, Panel):
 
 class DATA_PT_lightprobe_eevee(DataButtonsPanel, Panel):
     bl_label = "Probe"
-    COMPAT_ENGINES = {'BLENDER_EEVEE'}
+    COMPAT_ENGINES = {'BLENDER_EEVEE', 'GOO_ENGINE'}
 
     def draw(self, context):
         layout = self.layout
@@ -164,7 +165,7 @@ class DATA_PT_lightprobe_visibility(DataButtonsPanel, Panel):
 
 class DATA_PT_lightprobe_capture(DataButtonsPanel, Panel):
     bl_label = "Capture"
-    COMPAT_ENGINES = {'BLENDER_EEVEE'}
+    COMPAT_ENGINES = {'BLENDER_EEVEE', 'GOO_ENGINE'}
 
     @classmethod
     def poll(cls, context):
@@ -294,6 +295,7 @@ class DATA_PT_lightprobe_parallax(DataButtonsPanel, Panel):
     COMPAT_ENGINES = {
         'BLENDER_RENDER',
         'BLENDER_EEVEE',
+        'GOO_ENGINE',
     }
 
     @classmethod
@@ -354,7 +356,7 @@ class DATA_PT_lightprobe_display(DataButtonsPanel, Panel):
 class DATA_PT_lightprobe_display_eevee(DataButtonsPanel, Panel):
     bl_label = "Viewport Display"
     bl_options = {'DEFAULT_CLOSED'}
-    COMPAT_ENGINES = {'BLENDER_EEVEE'}
+    COMPAT_ENGINES = {'BLENDER_EEVEE', 'GOO_ENGINE'}
 
     def draw(self, context):
         layout = self.layout
@@ -386,8 +388,37 @@ class DATA_PT_lightprobe_display_eevee(DataButtonsPanel, Panel):
             col.prop(probe, "show_influence")
 
 
+class DATA_PT_lightprobe_goo_volume(DataButtonsPanel, Panel):
+    bl_label = "Goo Volume Grid"
+    COMPAT_ENGINES = {'GOO_ENGINE'}
+
+    @classmethod
+    def poll(cls, context):
+        engine = context.engine
+        return (
+            context.lightprobe
+            and context.lightprobe.type == 'VOLUME'
+            and (engine in cls.COMPAT_ENGINES)
+        )
+
+    def draw(self, context):
+        layout = self.layout
+        layout.use_property_split = True
+        layout.use_property_decorate = False
+
+        probe = context.lightprobe
+
+        col = layout.column()
+        sub = col.column(align=True)
+        sub.prop(probe, "resolution_x", text="Resolution X")
+        sub.prop(probe, "resolution_y", text="Y")
+        sub.prop(probe, "resolution_z", text="Z")
+        col.prop(probe, "influence_distance", text="Distance")
+        col.prop(probe, "capture_distance", text="Capture Distance")
+
+
 class DATA_PT_lightprobe_animation(DataButtonsPanel, PropertiesAnimationMixin, Panel):
-    COMPAT_ENGINES = {'BLENDER_EEVEE'}
+    COMPAT_ENGINES = {'BLENDER_EEVEE', 'GOO_ENGINE'}
     _animated_id_context_property = "lightprobe"
 
 
@@ -395,6 +426,7 @@ classes = (
     DATA_PT_context_lightprobe,
     DATA_PT_lightprobe,
     DATA_PT_lightprobe_eevee,
+    DATA_PT_lightprobe_goo_volume,
     DATA_PT_lightprobe_capture,
     DATA_PT_lightprobe_bake,
     DATA_PT_lightprobe_bake_resolution,

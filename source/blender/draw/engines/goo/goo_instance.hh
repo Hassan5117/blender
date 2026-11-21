@@ -18,9 +18,12 @@
 
 #include "goo_bloom.hh"
 #include "goo_light.hh"
+#include "goo_lookdev.hh"
 #include "goo_material.hh"
+#include "goo_probe.hh"
 #include "goo_render_pass.hh"
 #include "goo_sampling.hh"
+#include "goo_ssr.hh"
 
 namespace blender {
 struct ModifierData;
@@ -69,6 +72,7 @@ class Instance : public DrawEngine {
   /** Procedural World background pass (and Env pass-only fallback under film_transparent). */
   PassSimple world_ps_ = {"Goo.World"};
   PassSimple world_env_only_ps_ = {"Goo.WorldEnvOnly"};
+  PassSimple world_capture_ps_ = {"Goo.WorldCapture"};
   bool has_world_shader_ = false;
   float4 world_color_ = float4(0.05f, 0.05f, 0.05f, 1.0f);
   bool use_sky_ = true;
@@ -81,6 +85,13 @@ class Instance : public DrawEngine {
 
   /** Scene lights + shadow atlas. */
   LightModule lights;
+  /** World IBL, LookDev, and Light Probes. */
+  LookdevWorld lookdev_world_;
+  LookdevParameters prev_lookdev_params_;
+  const World *prev_world_ptr_ = nullptr;
+  ProbeModule probes;
+  /** Scene color/depth pyramids & Screen-Space Reflections. */
+  SsrModule ssr;
   /** Render passes, Shader AOVs, and Cryptomatte. */
   RenderPassModule render_passes;
   bool is_image_render_ = false;
@@ -97,7 +108,7 @@ class Instance : public DrawEngine {
   /** Offscreen buffers for depth prepass, GTAO, screenspace info copy, TAA, and post effects. */
   TextureFromPool prepass_depth_tx_ = {"goo.prepass_depth"};
   TextureFromPool gtao_horizon_tx_ = {"goo.gtao_horizon"};
-  TextureFromPool scene_color_tx_ = {"goo.scene_color"};
+  Texture scene_color_tx_ = {"goo.scene_color"};
   TextureFromPool sample_color_tx_ = {"goo.sample_color"};
   TextureFromPool sample_depth_tx_ = {"goo.sample_depth"};
   TextureFromPool taa_accum_tx_ = {"goo.taa_accum"};
@@ -182,7 +193,9 @@ class Instance : public DrawEngine {
                             gpu::Texture *dst_color,
                             gpu::Texture *dst_depth,
                             int sample_index,
-                            bool gtao_active);
+                            bool gtao_active,
+                            bool ssr_active,
+                            bool need_scene_color);
   PassMain::Sub &material_sub_get(const Material *ma);
   PassMain::Sub &gpumat_sub_get(Manager &manager,
                                 GPUMaterial *gpumat,

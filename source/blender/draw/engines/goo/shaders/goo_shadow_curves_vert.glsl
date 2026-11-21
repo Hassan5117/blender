@@ -21,4 +21,9 @@ void main()
   const float3 V = drw_world_incident_vector(ws_pt.P);
   const float3 world_pos = curves::shape_point_get(ws_pt, V).P;
   gl_Position = drw_point_world_to_homogenous(world_pos);
+#ifdef USE_WORLD_CLIP_PLANES
+  gl_ClipDistance[0] = ((goo_probe_buf.capture_flags & GOO_CAPTURE_CLIP_PLANE) != 0) ?
+                           dot(goo_probe_buf.capture_clip_plane, float4(world_pos, 1.0f)) :
+                           1.0f;
+#endif
 }

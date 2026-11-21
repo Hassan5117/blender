@@ -67,4 +67,9 @@ void main()
 #endif
 
   gl_Position = drw_point_world_to_homogenous(interp.P);
+#ifdef USE_WORLD_CLIP_PLANES
+  gl_ClipDistance[0] = ((goo_probe_buf.capture_flags & GOO_CAPTURE_CLIP_PLANE) != 0) ?
+                           dot(goo_probe_buf.capture_clip_plane, float4(interp.P, 1.0f)) :
+                           1.0f;
+#endif
 }

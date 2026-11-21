@@ -22,7 +22,7 @@ void main()
   g_data.is_strand = false;
   g_data.hair_diameter = 0.0f;
   g_data.hair_strand_id = 0;
-  g_data.ray_type = uchar(0); /* RAY_TYPE_CAMERA */
+  g_data.ray_type = ((goo_probe_buf.capture_flags & GOO_CAPTURE_WORLD) != 0) ? uchar(1) : uchar(0);
   g_data.ray_depth = 0.0f;
   g_data.ray_length = 0.0f;
   g_data.barycentric_coords = float2(0.0f);
@@ -34,12 +34,24 @@ void main()
 
   nodetree_surface(0.0f);
 
-#ifdef GOO_PASS_WRITE
-  if (goo_pass_buf.env_id >= 0) {
-    imageStoreFast(
-        goo_rp_color_img, int3(int2(gl_FragCoord.xy), goo_pass_buf.env_id), float4(g_goo_radiance, 1.0f));
+  float3 world_rad = g_goo_radiance;
+#ifdef GOO_INDIRECT_READ
+  if ((goo_probe_buf.capture_flags & GOO_CAPTURE_WORLD) == 0 &&
+      goo_probe_buf.lookdev_params.z > 0.5f)
+  {
+    if (goo_probe_buf.lookdev_params.y > 0.01f && goo_probe_buf.lookdev_params.w > 0.5f) {
+      world_rad = goo_sample_env_probe(0, g_data.P, goo_probe_buf.lookdev_params.y);
+    }
+    world_rad *= saturate(goo_probe_buf.lookdev_params.x);
   }
 #endif
 
-  out_color = float4(g_goo_radiance, 1.0f);
+#ifdef GOO_PASS_WRITE
+  if (goo_pass_buf.env_id >= 0 && (goo_probe_buf.capture_flags & GOO_CAPTURE_NO_PASS_WRITE) == 0) {
+    imageStoreFast(
+        goo_rp_color_img, int3(int2(gl_FragCoord.xy), goo_pass_buf.env_id), float4(world_rad, 1.0f));
+  }
+#endif
+
+  out_color = float4(world_rad, 1.0f);
 }

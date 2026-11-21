@@ -946,6 +946,17 @@ void blo_do_versions_520(FileData *fd, Library * /*lib*/, Main *bmain)
       scene.eevee.flag &= ~SCE_EEVEE_GTAO_ENABLED;
     }
   }
+  if (!DNA_struct_member_exists_with_alias(fd->filesdna, "SceneEEVEE", "float", "ssr_quality")) {
+    for (Scene &scene : bmain->scenes) {
+      scene.eevee.ssr_quality = 0.25f;
+      scene.eevee.ssr_max_roughness = 0.5f;
+      scene.eevee.ssr_thickness = 0.2f;
+      scene.eevee.ssr_border_fade = 0.075f;
+      scene.eevee.ssr_firefly_fac = 10.0f;
+      scene.eevee.flag |= SCE_EEVEE_SSR_HALF_RESOLUTION;
+      scene.eevee.flag &= ~SCE_EEVEE_SSR_REFRACTION;
+    }
+  }
   if (!DNA_struct_member_exists_with_alias(fd->filesdna, "Light", "float", "contact_dist")) {
     for (Light &light : bmain->lights) {
       light.contact_dist = 0.2f;

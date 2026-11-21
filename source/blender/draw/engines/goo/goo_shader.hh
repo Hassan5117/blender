@@ -47,6 +47,18 @@ class ShaderModule {
   gpu::StaticShader cryptomatte_sort = {"goo_cryptomatte_sort"};
   gpu::StaticShader pass_display = {"goo_pass_display"};
 
+  /* Indirect IBL, Light Probes, Color/Hi-Z Pyramids, and SSR. */
+  gpu::StaticShader env_remap = {"goo_env_remap"};
+  gpu::StaticShader env_convolve = {"goo_env_convolve"};
+  gpu::StaticShader cube_to_sh = {"goo_cube_to_sh"};
+  gpu::StaticShader color_copy = {"goo_color_copy"};
+  gpu::StaticShader color_downsample = {"goo_color_downsample"};
+  gpu::StaticShader color_downsample_array = {"goo_color_downsample_array"};
+  gpu::StaticShader hiz_copy = {"goo_hiz_copy"};
+  gpu::StaticShader hiz_downsample = {"goo_hiz_downsample"};
+  gpu::StaticShader ssr_trace = {"goo_ssr_trace"};
+  gpu::StaticShader ssr_resolve = {"goo_ssr_resolve"};
+
   UtilityTexture utility_tx;
 
   static ShaderModule &get();

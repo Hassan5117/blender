@@ -90,6 +90,56 @@ struct [[host_shared]] GooPassBlock {
   uint4 aov_hash[GOO_AOV_MAX / 4];
 };
 
+struct [[host_shared]] GooSHL2 {
+  float4 sh[9];
+};
+
+struct [[host_shared]] GooSphereProbeData {
+  float4x4 world_to_influence;
+  float4x4 world_to_parallax;
+  /** xyz: world location; w: falloff (0.001..1.0). */
+  float4 location_falloff;
+  /** x: layer; y: influence_shape; z: parallax_shape; w: custom_parallax (!= 0). */
+  int4 params;
+  /** x: intensity; y: parallax_distance; z: distinf; w: volume_rank. */
+  float4 extra;
+};
+
+struct [[host_shared]] GooPlanarProbeData {
+  float4x4 world_to_plane;
+  float4x4 ref_vp;
+  /** xyz: plane world normal; w: falloff. */
+  float4 normal_falloff;
+  /** x: float(layer_id); y: parallax_distance; z: intensity; w: unused. */
+  float4 params;
+};
+
+struct [[host_shared]] GooVolumeProbeData {
+  float4x4 world_to_volume;
+  /** xyz: resolution (nx, ny, nz); w: cell offset into `goo_volume_sh_buf` (>= 1). */
+  int4 res_offset;
+  /** x: falloff; y: intensity; z: normal_bias; w: view_bias. */
+  float4 params;
+};
+
+struct [[host_shared]] GooProbeBlock {
+  float4 capture_clip_plane;
+  /** x: ssr_quality; y: ssr_max_roughness; z: ssr_thickness; w: ssr_border_fade. */
+  float4 ssr_params;
+  /** x: ssr_firefly_fac; y: indirect_light_intensity; z: clamp_surface_indirect; w: float(GOO_ENV_MIPS). */
+  float4 indirect_params;
+  /** x: bg_opacity; y: bg_blur_lod; z: is_lookdev_bg; w: has_world_ibl. */
+  float4 lookdev_params;
+  int sphere_probe_count;
+  int planar_probe_count;
+  int volume_probe_count;
+  int capture_flags;
+  int ssr_flags;
+  int env_oct_res;
+  int _pad0;
+  int _pad1;
+};
+
 #ifndef GPU_SHADER
 }  // namespace blender::goo
 #endif

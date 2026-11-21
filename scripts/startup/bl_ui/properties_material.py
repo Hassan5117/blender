@@ -379,6 +379,11 @@ class GOO_MATERIAL_PT_settings(MaterialButtonsPanel, Panel):
         if mat.blend_method == 'BLEND':
             layout.prop(mat, "show_transparent_back")
 
+        layout.prop(mat, "use_screen_refraction")
+        sub = layout.row()
+        sub.active = mat.use_screen_refraction
+        sub.prop(mat, "refraction_depth")
+
         layout.prop(mat, "displacement_method")
         layout.prop(mat, "pass_index")
 

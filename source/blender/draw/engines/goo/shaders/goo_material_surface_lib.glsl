@@ -49,6 +49,28 @@ float4 goo_surface_frag_exec()
 
   goo_store_surface_passes(int2(gl_FragCoord.xy), holdout, drw_resource_id());
 
+#ifdef GOO_SSR_WRITE
+  if ((goo_probe_buf.ssr_flags & GOO_SSR_FLAG_ENABLED) != 0 &&
+      (goo_probe_buf.capture_flags & GOO_CAPTURE_NO_SSR) == 0 &&
+      (goo_material_flags & (GOO_MAT_FLAG_NO_PASS_WRITE | GOO_MAT_FLAG_IS_REFRACT_PASS)) == 0)
+  {
+    int2 texel = int2(gl_FragCoord.xy);
+    float vis = 1.0f - holdout;
+    if (g_goo_ssr_weight > 1e-6f && g_goo_ssr_mask > 1e-4f && vis > 1e-4f) {
+      imageStoreFast(
+          goo_ssr_data_img, texel, float4(g_goo_ssr_normal, saturate(g_goo_ssr_roughness)));
+      imageStoreFast(
+          goo_ssr_spec_img, texel, float4(g_goo_ssr_throughput * vis, saturate(g_goo_ssr_mask)));
+      imageStoreFast(goo_ssr_fallback_img, texel, float4(g_goo_ssr_fallback * vis, 1.0f));
+    }
+    else {
+      imageStoreFast(goo_ssr_data_img, texel, float4(0.0f, 0.0f, 0.0f, -1.0f));
+      imageStoreFast(goo_ssr_spec_img, texel, float4(0.0f));
+      imageStoreFast(goo_ssr_fallback_img, texel, float4(0.0f));
+    }
+  }
+#endif
+
 #ifdef GOO_USE_SET_DEPTH
   if (g_goo_frag_depth_set) {
     gl_FragDepth = g_goo_frag_depth;

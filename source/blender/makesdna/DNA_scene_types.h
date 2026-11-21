@@ -2628,8 +2628,9 @@ enum eSceneEEVEE_Flag : int {
   // SCE_EEVEE_SSS_ENABLED = (1 << 12), /* Unused */
   // SCE_EEVEE_SSS_SEPARATE_ALBEDO = (1 << 13), /* Unused */
   SCE_EEVEE_SSR_ENABLED = (1 << 14),
-  // SCE_EEVEE_SSR_REFRACTION = (1 << 15), /* Unused. */
-  // SCE_EEVEE_SSR_HALF_RESOLUTION = (1 << 16), /* Unused. */
+  /* Goo Engine: restored (same bits as Goo 4.x / EEVEE Legacy, for file compatibility). */
+  SCE_EEVEE_SSR_REFRACTION = (1 << 15),
+  SCE_EEVEE_SSR_HALF_RESOLUTION = (1 << 16),
   // SCE_EEVEE_SHOW_IRRADIANCE = (1 << 17), /* Unused. */
   // SCE_EEVEE_SHOW_CUBEMAPS = (1 << 18), /* Unused. */
   SCE_EEVEE_GI_AUTOBAKE = (1 << 19),
@@ -2654,7 +2655,8 @@ struct SceneEEVEE {
   DNA_DEFINE_CXX_METHODS(SceneEEVEE)
 
   eSceneEEVEE_Flag flag = SCE_EEVEE_TAA_REPROJECTION | SCE_EEVEE_SHADOW_ENABLED |
-                          SCE_EEVEE_GTAO_BENT_NORMALS | SCE_EEVEE_GTAO_BOUNCE;
+                          SCE_EEVEE_GTAO_BENT_NORMALS | SCE_EEVEE_GTAO_BOUNCE |
+                          SCE_EEVEE_SSR_HALF_RESOLUTION;
   int gi_diffuse_bounces = 3;
   int gi_cubemap_resolution = 512;
   int gi_visibility_resolution = 32;
@@ -2733,6 +2735,14 @@ struct SceneEEVEE {
   /* Goo Engine: GTAO settings (names match Goo 4.x / EEVEE Legacy for file compatibility). */
   float gtao_factor = 1.0f;
   float goo_gtao_quality = 0.25f;
+
+  /* Goo Engine: SSR settings (names match Goo 4.x / EEVEE Legacy for file compatibility). */
+  float ssr_quality = 0.25f;
+  float ssr_max_roughness = 0.5f;
+  float ssr_thickness = 0.2f;
+  float ssr_border_fade = 0.075f;
+  float ssr_firefly_fac = 10.0f;
+  float _pad2 = 0.0f;
 };
 
 struct SceneGpencil {

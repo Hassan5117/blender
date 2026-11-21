@@ -208,6 +208,7 @@ PassMain::Sub &LightModule::shadow_mat_sub_get(Manager &manager,
     sub.push_constant("goo_light_group_shadows", shadow_groups);
     sub.push_constant("goo_alpha_threshold", ma ? ma->alpha_threshold : 0.5f);
     sub.push_constant("goo_material_flags", mat_flags);
+    sub.push_constant("goo_refraction_depth", 0.0f);
     return &sub;
   });
 }

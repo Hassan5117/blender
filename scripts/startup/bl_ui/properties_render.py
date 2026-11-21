@@ -1281,11 +1281,69 @@ class RENDER_PT_goo_ambient_occlusion(RenderButtonsPanel, Panel):
         col.prop(props, "use_gtao_bounce")
 
 
+class RENDER_PT_goo_screen_space_reflections(RenderButtonsPanel, Panel):
+    bl_label = "Screen Space Reflections"
+    bl_options = {'DEFAULT_CLOSED'}
+    COMPAT_ENGINES = {'GOO_ENGINE'}
+
+    @classmethod
+    def poll(cls, context):
+        return (context.engine in cls.COMPAT_ENGINES)
+
+    def draw_header(self, context):
+        scene = context.scene
+        props = scene.eevee
+        self.layout.prop(props, "use_ssr", text="")
+
+    def draw(self, context):
+        layout = self.layout
+        layout.use_property_split = True
+        layout.use_property_decorate = False
+
+        scene = context.scene
+        props = scene.eevee
+
+        layout.active = props.use_ssr
+        col = layout.column()
+        col.prop(props, "use_ssr_refraction")
+        col.prop(props, "use_ssr_halfres")
+        col.prop(props, "ssr_quality")
+        col.prop(props, "ssr_max_roughness")
+        col.prop(props, "ssr_thickness")
+        col.prop(props, "ssr_border_fade")
+        col.prop(props, "ssr_firefly_fac", text="Clamp")
+
+
+class RENDER_PT_goo_indirect_lighting(RenderButtonsPanel, Panel):
+    bl_label = "Indirect Lighting"
+    bl_options = {'DEFAULT_CLOSED'}
+    COMPAT_ENGINES = {'GOO_ENGINE'}
+
+    @classmethod
+    def poll(cls, context):
+        return (context.engine in cls.COMPAT_ENGINES)
+
+    def draw(self, context):
+        layout = self.layout
+        layout.use_property_split = True
+        layout.use_property_decorate = False
+
+        scene = context.scene
+        props = scene.eevee
+
+        col = layout.column()
+        col.prop(props, "gi_cubemap_resolution", text="Cubemap Size")
+        col.prop(props, "indirect_light_intensity", text="Indirect Intensity")
+        col.prop(props, "clamp_surface_indirect", text="Indirect Clamping")
+
+
 classes = (
     RENDER_PT_context,
     RENDER_PT_goo_bloom,
     RENDER_PT_goo_shadows,
     RENDER_PT_goo_ambient_occlusion,
+    RENDER_PT_goo_screen_space_reflections,
+    RENDER_PT_goo_indirect_lighting,
     RENDER_PT_eevee_sampling,
     RENDER_PT_eevee_sampling_viewport,
     RENDER_PT_eevee_sampling_render,

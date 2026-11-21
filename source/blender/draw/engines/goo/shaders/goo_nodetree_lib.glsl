@@ -19,10 +19,14 @@
 
 #pragma once
 
+#include "infos/goo_indirect_infos.hh"
 #include "infos/goo_material_infos.hh"
 
 SHADER_LIBRARY_CREATE_INFO(goo_lighting)
 SHADER_LIBRARY_CREATE_INFO(goo_render_passes)
+SHADER_LIBRARY_CREATE_INFO(goo_probe_ubo)
+SHADER_LIBRARY_CREATE_INFO(goo_indirect_read)
+SHADER_LIBRARY_CREATE_INFO(goo_ssr_write)
 SHADER_LIBRARY_CREATE_INFO(UtilityTexture)
 SHADER_LIBRARY_CREATE_INFO(draw_view)
 
@@ -32,6 +36,7 @@ SHADER_LIBRARY_CREATE_INFO(draw_view)
 #include "eevee_utility_tx.bsl.hh"
 #include "goo_defines.hh"
 #include "goo_gtao_lib.glsl"
+#include "goo_probe_lib.glsl"
 #include "gpu_shader_codegen_lib.glsl"
 #include "gpu_shader_math_base_lib.glsl"
 #include "gpu_shader_math_safe_lib.glsl"
@@ -381,6 +386,12 @@ float g_goo_shadow_sum;
 float g_goo_shadow_weight;
 float g_goo_frag_depth;
 bool g_goo_frag_depth_set;
+float3 g_goo_ssr_normal;
+float g_goo_ssr_roughness;
+float3 g_goo_ssr_throughput;
+float3 g_goo_ssr_fallback;
+float g_goo_ssr_mask;
+float g_goo_ssr_weight;
 
 void closure_weights_reset(float /*closure_rand*/)
 {
@@ -392,6 +403,12 @@ void closure_weights_reset(float /*closure_rand*/)
   g_goo_spec_light = float3(0.0f);
   g_goo_spec_color = float3(0.0f);
   g_goo_emission = float3(0.0f);
+  g_goo_ssr_normal = float3(0.0f);
+  g_goo_ssr_roughness = -1.0f;
+  g_goo_ssr_throughput = float3(0.0f);
+  g_goo_ssr_fallback = float3(0.0f);
+  g_goo_ssr_mask = 0.0f;
+  g_goo_ssr_weight = 0.0f;
 }
 
 void goo_pass_accum_reset()
@@ -403,7 +420,9 @@ void goo_pass_accum_reset()
 void output_aov(int2 texel, float4 color, float value, uint hash, float holdout, uint ob_flag)
 {
 #ifdef GOO_PASS_WRITE
-  if ((goo_material_flags & GOO_MAT_FLAG_NO_PASS_WRITE) != 0) {
+  if ((goo_material_flags & GOO_MAT_FLAG_NO_PASS_WRITE) != 0 ||
+      (goo_probe_buf.capture_flags & GOO_CAPTURE_NO_PASS_WRITE) != 0)
+  {
     return;
   }
   uint total_len = uint(goo_pass_buf.aov_color_len + goo_pass_buf.aov_value_len);
@@ -683,8 +702,10 @@ float goo_contact_shadow(GooLightData ld, float3 P, float shadow_vis)
 #endif
 }
 
-float goo_gtao_eval_vis(float3 N, float3 albedo, bool respect_enable_flag)
+float goo_gtao_eval_vis_bent(
+    float3 N, float3 albedo, bool respect_enable_flag, float3 &out_bent_n)
 {
+  out_bent_n = N;
 #ifdef MAT_GEOM_WORLD
   return 1.0f;
 #else
@@ -701,6 +722,7 @@ float goo_gtao_eval_vis(float3 N, float3 albedo, bool respect_enable_flag)
 
   float vis = 1.0f;
   float3 bent_n = N;
+  bool use_bent = (flags & GOO_GTAO_FLAG_BENT_NORMALS) != 0;
   goo_gtao_integrate(horizons,
                      gl_FragCoord.xy,
                      goo_light_buf.sample_params.yz,
@@ -708,15 +730,24 @@ float goo_gtao_eval_vis(float3 N, float3 albedo, bool respect_enable_flag)
                      safe_normalize(N),
                      g_data.Ng,
                      0.0f,
-                     (flags & GOO_GTAO_FLAG_BENT_NORMALS) != 0,
+                     use_bent,
                      vis,
                      bent_n);
 
+  if (use_bent) {
+    out_bent_n = bent_n;
+  }
   if ((flags & GOO_GTAO_FLAG_BOUNCE) != 0) {
     vis = goo_gtao_multibounce(vis, albedo);
   }
   return pow(clamp(vis, 0.0f, 1.0f), max(goo_light_buf.gtao_params.y, 0.0f));
 #endif
+}
+
+float goo_gtao_eval_vis(float3 N, float3 albedo, bool respect_enable_flag)
+{
+  float3 unused_bent = N;
+  return goo_gtao_eval_vis_bent(N, albedo, respect_enable_flag, unused_bent);
 }
 
 float goo_scene_diffuse_ao(float3 N, float3 albedo)
@@ -783,7 +814,15 @@ float goo_eval_shadow_pass(float3 P, float3 N)
 
 float3 goo_diffuse_light(float3 N, float3 P, float3 albedo)
 {
-  float3 light = goo_light_buf.world_ambient.rgb * goo_scene_diffuse_ao(N, albedo);
+  float3 bent_n = N;
+  float ao = goo_gtao_eval_vis_bent(N, albedo, true, bent_n);
+#ifdef GOO_INDIRECT_READ
+  float3 V = drw_world_incident_vector(P);
+  float3 indirect = goo_eval_diffuse_indirect(P, bent_n, V);
+#else
+  float3 indirect = goo_light_buf.world_ambient.rgb;
+#endif
+  float3 light = indirect * ao;
   for (int i = 0; i < goo_light_buf.light_count; i++) {
     GooLightData ld = goo_light_buf.lights[i];
     if (!goo_light_group_match(ld.light_group_bits, goo_light_groups)) {
@@ -807,12 +846,24 @@ float3 goo_diffuse_light(float3 N, float3 P, float3 albedo)
   return light;
 }
 
-float3 goo_specular_light(float3 N, float3 P, float roughness)
+float3 goo_specular_light_ex(float3 N,
+                             float3 P,
+                             float roughness,
+                             float3 &out_indirect_spec,
+                             float &out_planar_conf,
+                             float &out_ao)
 {
   float3 V = drw_world_incident_vector(P);
   float shininess = mix(512.0f, 2.0f, clamp(roughness, 0.0f, 1.0f));
-  float ao = goo_scene_diffuse_ao(N, float3(0.5f));
-  float3 light = goo_light_buf.world_ambient.rgb * ao * (1.0f - roughness) * 0.5f;
+  float3 bent_n = N;
+  out_ao = goo_gtao_eval_vis_bent(N, float3(0.5f), true, bent_n);
+#ifdef GOO_INDIRECT_READ
+  out_indirect_spec = goo_eval_specular_indirect(P, N, V, roughness, out_planar_conf);
+#else
+  out_indirect_spec = goo_light_buf.world_ambient.rgb * (1.0f - roughness) * 0.5f;
+  out_planar_conf = 0.0f;
+#endif
+  float3 light = out_indirect_spec * out_ao;
   for (int i = 0; i < goo_light_buf.light_count; i++) {
     GooLightData ld = goo_light_buf.lights[i];
     if (!goo_light_group_match(ld.light_group_bits, goo_light_groups)) {
@@ -836,6 +887,14 @@ float3 goo_specular_light(float3 N, float3 P, float roughness)
     }
   }
   return light;
+}
+
+float3 goo_specular_light(float3 N, float3 P, float roughness)
+{
+  float3 unused_ind = float3(0.0f);
+  float unused_planar = 0.0f;
+  float unused_ao = 1.0f;
+  return goo_specular_light_ex(N, P, roughness, unused_ind, unused_planar, unused_ao);
 }
 
 /* -------------------------------------------------------------------- */
@@ -899,7 +958,12 @@ void goo_calc_shader_info(float3 position,
 
   shadows = (light_accum > 1e-5f) ? (1.0f - shadow_accum / light_accum) : 1.0f;
   self_shadows = (light_accum > 1e-5f) ? (1.0f - self_shadow_accum / light_accum) : 1.0f;
+#ifdef GOO_INDIRECT_READ
+  ambient = float4(
+      goo_eval_diffuse_indirect(position, n_n, drw_world_incident_vector(position)), 1.0f);
+#else
   ambient = float4(goo_light_buf.world_ambient.rgb, 1.0f);
+#endif
 }
 
 void goo_calc_shader_info(float3 position,
@@ -1019,22 +1083,200 @@ Closure closure_eval(ClosureTranslucent translucent)
 
 Closure closure_eval(ClosureReflection reflection)
 {
-  float3 light = goo_specular_light(reflection.N, g_data.P, reflection.roughness);
-  g_goo_radiance += reflection.color * reflection.weight * light;
-  g_goo_spec_color += reflection.color * reflection.weight;
+  float3 indirect_spec = float3(0.0f);
+  float planar_conf = 0.0f;
+  float ao = 1.0f;
+  float3 light = goo_specular_light_ex(
+      reflection.N, g_data.P, reflection.roughness, indirect_spec, planar_conf, ao);
+  float3 throughput = reflection.color * reflection.weight;
+  g_goo_radiance += throughput * light;
+  g_goo_spec_color += throughput;
   g_goo_spec_light += light * reflection.weight;
+
+  float lobe_w = length(throughput);
+  if (lobe_w > g_goo_ssr_weight) {
+    g_goo_ssr_weight = lobe_w;
+    g_goo_ssr_normal = safe_normalize(reflection.N);
+    g_goo_ssr_roughness = saturate(reflection.roughness);
+  }
+  g_goo_ssr_throughput += throughput * ao;
+  g_goo_ssr_fallback += throughput * indirect_spec * ao;
+  g_goo_ssr_mask = max(g_goo_ssr_mask, saturate(1.0f - planar_conf));
   return Closure(0);
+}
+
+float3 goo_eval_refraction(float3 N, float roughness, float ior, bool is_thin)
+{
+  float3 n_n = safe_normalize(N);
+  float r_clamped = saturate(roughness);
+  float3 P = g_data.P;
+  float3 V = drw_world_incident_vector(P);
+
+  float3 trace_P = P;
+  float3 T;
+  if (is_thin) {
+    T = -V;
+  }
+  else {
+    float safe_ior = max(ior, 1e-4f);
+    float eta = 1.0f / safe_ior;
+    float3 R1 = refract(-V, n_n, eta);
+    if (dot(R1, R1) < 1e-5f) {
+      R1 = reflect(-V, n_n);
+    }
+    R1 = safe_normalize(R1);
+
+    if (goo_refraction_depth > 1e-4f) {
+      float denom = min(dot(R1, n_n), -0.1f);
+      float t_exit = -goo_refraction_depth / denom;
+      trace_P = P + R1 * clamp(t_exit, 0.0f, goo_refraction_depth * 6.0f);
+      T = -V;
+    }
+    else {
+      T = R1;
+    }
+  }
+
+#ifdef GOO_INDIRECT_READ
+  float3 fallback_rad = goo_eval_env_direction(trace_P, T, r_clamped);
+  bool do_ss_refract =
+      ((goo_probe_buf.ssr_flags & (GOO_SSR_FLAG_ENABLED | GOO_SSR_FLAG_REFRACTION)) ==
+       (GOO_SSR_FLAG_ENABLED | GOO_SSR_FLAG_REFRACTION)) &&
+      ((goo_material_flags & (GOO_MAT_FLAG_SS_REFRACTION | GOO_MAT_FLAG_IS_REFRACT_PASS)) ==
+       (GOO_MAT_FLAG_SS_REFRACTION | GOO_MAT_FLAG_IS_REFRACT_PASS));
+  if (!do_ss_refract) {
+    return fallback_rad;
+  }
+
+  float max_rough = goo_probe_buf.ssr_params.y;
+  if (r_clamped > max_rough + 0.2f) {
+    return fallback_rad;
+  }
+
+  float3 vP_start = drw_point_world_to_view(trace_P);
+  float3 vT = safe_normalize(drw_normal_world_to_view(T));
+  float3 ss_start = drw_point_view_to_screen(vP_start);
+  float v_near = drw_depth_screen_to_view(0.0f);
+  float max_t = 30.0f;
+  if (vT.z > 1e-4f) {
+    max_t = min(max_t, max((v_near - vP_start.z) * 0.9f / vT.z, 0.05f));
+  }
+  float3 ss_end = drw_point_view_to_screen(vP_start + vT * max_t);
+  if (any(lessThan(ss_start.xy, float2(0.0f))) || any(greaterThan(ss_start.xy, float2(1.0f)))) {
+    return fallback_rad;
+  }
+
+  float3 ss_delta = ss_end - ss_start;
+  float clip_t = 1.0f;
+  if (ss_delta.x > 1e-6f) {
+    clip_t = min(clip_t, (1.0f - ss_start.x) / ss_delta.x);
+  }
+  else if (ss_delta.x < -1e-6f) {
+    clip_t = min(clip_t, -ss_start.x / ss_delta.x);
+  }
+  if (ss_delta.y > 1e-6f) {
+    clip_t = min(clip_t, (1.0f - ss_start.y) / ss_delta.y);
+  }
+  else if (ss_delta.y < -1e-6f) {
+    clip_t = min(clip_t, -ss_start.y / ss_delta.y);
+  }
+  ss_delta *= clamp(clip_t, 0.0f, 1.0f);
+
+  const int STEPS = 48;
+  float dt = 1.0f / float(STEPS);
+  float step_dz = abs(vT.z * max_t * clamp(clip_t, 0.0f, 1.0f)) * dt;
+  float thickness = max(max(goo_probe_buf.ssr_params.z * 2.0f, 0.25f), step_dz * 2.0f);
+  float t_hit = 0.0f;
+  float t_prev = 0.0f;
+  bool found = false;
+
+  for (int i = 1; i <= STEPS; i++) {
+    float t = float(i) * dt;
+    float3 cur_ss = ss_start + ss_delta * t;
+    if (any(lessThan(cur_ss.xy, float2(0.0f))) || any(greaterThan(cur_ss.xy, float2(1.0f))) ||
+        cur_ss.z <= 0.0f || cur_ss.z >= 1.0f)
+    {
+      break;
+    }
+    float surf_z = textureLod(goo_depth_tx, cur_ss.xy, 0.0f).r;
+    if (surf_z >= 1.0f) {
+      t_prev = t;
+      continue;
+    }
+    float ray_vz = drw_depth_screen_to_view(cur_ss.z);
+    float surf_vz = drw_depth_screen_to_view(surf_z);
+    float diff = surf_vz - ray_vz;
+    if (diff > -0.02f && diff < thickness) {
+      t_hit = t;
+      found = true;
+      break;
+    }
+    t_prev = t;
+  }
+
+  float2 hit_uv = float2(-1.0f);
+  float hit_conf = 0.0f;
+  if (found) {
+    float lo = t_prev;
+    float hi = t_hit;
+    for (int b = 0; b < 5; b++) {
+      float mid = 0.5f * (lo + hi);
+      float3 mid_ss = ss_start + ss_delta * mid;
+      float surf_z = textureLod(goo_depth_tx, mid_ss.xy, 0.0f).r;
+      float ray_vz = drw_depth_screen_to_view(mid_ss.z);
+      float surf_vz = drw_depth_screen_to_view(surf_z);
+      float diff = surf_vz - ray_vz;
+      if (surf_z < 1.0f && diff > -0.02f && diff < thickness * 1.5f) {
+        hi = mid;
+      }
+      else {
+        lo = mid;
+      }
+    }
+    hit_uv = clamp(ss_start.xy + ss_delta.xy * hi, float2(0.0f), float2(1.0f));
+    float border = min(min(hit_uv.x, 1.0f - hit_uv.x), min(hit_uv.y, 1.0f - hit_uv.y));
+    hit_conf = saturate(border / max(goo_probe_buf.ssr_params.w, 1e-4f));
+  }
+  else {
+    float bg_z = textureLod(goo_depth_tx, ss_start.xy, 0.0f).r;
+    if (bg_z >= 1.0f) {
+      hit_uv = clamp(ss_start.xy, float2(0.0f), float2(1.0f));
+      float border = min(min(hit_uv.x, 1.0f - hit_uv.x), min(hit_uv.y, 1.0f - hit_uv.y));
+      hit_conf = saturate(border / max(goo_probe_buf.ssr_params.w, 1e-4f));
+    }
+  }
+
+  hit_conf *= 1.0f - smoothstep(max_rough, max(max_rough + 0.2f, max_rough + 1e-4f), r_clamped);
+  if (hit_conf <= 1e-4f) {
+    return fallback_rad;
+  }
+
+  float lod = clamp(sqrt(r_clamped) * float(GOO_COLOR_MIPS - 1), 0.0f, float(GOO_COLOR_MIPS - 1));
+  float3 ss_rad = max(textureLod(goo_scene_color_tx, hit_uv, lod).rgb, float3(0.0f));
+  float firefly = goo_probe_buf.indirect_params.x;
+  if (firefly > 0.0f) {
+    float lum = max(ss_rad.r, max(ss_rad.g, ss_rad.b));
+    if (lum > firefly) {
+      ss_rad *= (firefly / lum);
+    }
+  }
+  return mix(fallback_rad, ss_rad, hit_conf);
+#else
+  return goo_light_buf.world_ambient.rgb;
+#endif
 }
 
 Closure closure_eval(ClosureRefraction refraction)
 {
-  g_goo_radiance += refraction.color * refraction.weight * goo_light_buf.world_ambient.rgb;
+  float3 light = goo_eval_refraction(refraction.N, refraction.roughness, refraction.ior, false);
+  g_goo_radiance += refraction.color * refraction.weight * light;
   return Closure(0);
 }
 
 Closure closure_eval(ClosureThinRefraction refraction)
 {
-  g_goo_radiance += refraction.color * refraction.weight * goo_light_buf.world_ambient.rgb;
+  float3 light = goo_eval_refraction(refraction.N, refraction.roughness, 1.0f, true);
+  g_goo_radiance += refraction.color * refraction.weight * light;
   return Closure(0);
 }
 
@@ -1161,7 +1403,9 @@ float4 closure_to_rgba(Closure /*cl*/)
 void goo_store_surface_passes(int2 texel, float holdout, uint resource_id)
 {
 #if defined(GOO_PASS_WRITE) && !defined(MAT_GEOM_WORLD)
-  if ((goo_material_flags & GOO_MAT_FLAG_NO_PASS_WRITE) != 0) {
+  if ((goo_material_flags & GOO_MAT_FLAG_NO_PASS_WRITE) != 0 ||
+      (goo_probe_buf.capture_flags & GOO_CAPTURE_NO_PASS_WRITE) != 0)
+  {
     return;
   }
 

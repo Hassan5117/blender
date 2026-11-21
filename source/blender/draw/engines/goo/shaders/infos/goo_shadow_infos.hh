@@ -8,14 +8,19 @@
 
 #  include "draw_object_infos_infos.hh"
 #  include "draw_view_infos.hh"
+#  include "goo_indirect_infos.hh"
 #endif
 
+#include "goo_defines.hh"
 #include "gpu_shader_create_info.hh"
 
 GPU_SHADER_CREATE_INFO(goo_shadow_mesh)
 VERTEX_IN(0, float3, pos)
 VERTEX_SOURCE("goo_shadow_vert.glsl")
 FRAGMENT_SOURCE("goo_shadow_frag.glsl")
+BUILTINS(BuiltinBits::CLIP_DISTANCES)
+DEFINE("USE_WORLD_CLIP_PLANES")
+ADDITIONAL_INFO(goo_probe_ubo)
 ADDITIONAL_INFO(draw_view)
 ADDITIONAL_INFO(draw_modelmat)
 DO_STATIC_COMPILATION()
@@ -35,6 +40,9 @@ GPU_SHADER_CREATE_END()
 GPU_SHADER_CREATE_INFO(goo_shadow_curves)
 VERTEX_SOURCE("goo_shadow_curves_vert.glsl")
 FRAGMENT_SOURCE("goo_shadow_frag.glsl")
+BUILTINS(BuiltinBits::CLIP_DISTANCES)
+DEFINE("USE_WORLD_CLIP_PLANES")
+ADDITIONAL_INFO(goo_probe_ubo)
 ADDITIONAL_INFO(draw_view)
 ADDITIONAL_INFO(draw_modelmat)
 ADDITIONAL_INFO(draw_curves)
