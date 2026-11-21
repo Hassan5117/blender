@@ -36,6 +36,9 @@ enum eGooMaterialVariant : uint64_t {
   GOO_MAT_WORLD = 1 << 1,
   GOO_MAT_PREPASS_MESH = 1 << 2,
   GOO_MAT_SHADOW_MESH = 1 << 3,
+  GOO_MAT_SURFACE_CURVES = 1 << 4,
+  GOO_MAT_PREPASS_CURVES = 1 << 5,
+  GOO_MAT_SHADOW_CURVES = 1 << 6,
 };
 
 namespace {
@@ -150,8 +153,10 @@ static void codegen_callback(void * /*thunk*/, GPUMaterial *gpumat, GPUCodegenOu
   ShaderCreateInfo &info = *reinterpret_cast<ShaderCreateInfo *>(codegen.create_info);
   const uint64_t uuid = GPU_material_uuid_get(gpumat);
   const bool is_world = (uuid & GOO_MAT_WORLD) != 0;
-  const bool is_prepass = (uuid & GOO_MAT_PREPASS_MESH) != 0;
-  const bool is_shadow = (uuid & GOO_MAT_SHADOW_MESH) != 0;
+  const bool is_curves = (uuid & (GOO_MAT_SURFACE_CURVES | GOO_MAT_PREPASS_CURVES |
+                                   GOO_MAT_SHADOW_CURVES)) != 0;
+  const bool is_prepass = (uuid & (GOO_MAT_PREPASS_MESH | GOO_MAT_PREPASS_CURVES)) != 0;
+  const bool is_shadow = (uuid & (GOO_MAT_SHADOW_MESH | GOO_MAT_SHADOW_CURVES)) != 0;
 
   /* WORKAROUND (same as EEVEE): object attributes come from the draw manager SSBO. */
   if (GPU_material_uniform_attributes(gpumat) != nullptr) {
@@ -174,18 +179,26 @@ static void codegen_callback(void * /*thunk*/, GPUMaterial *gpumat, GPUCodegenOu
   if (is_world) {
     info.define("MAT_GEOM_WORLD");
     info.additional_info("goo_material_world");
+    info.early_fragment_test(true);
   }
   else if (is_prepass) {
-    info.additional_info("goo_material_prepass_mesh");
-  }
-  else if (is_shadow) {
-    info.additional_info("goo_material_shadow_mesh");
-  }
-  else {
-    info.additional_info("goo_material_surface_mesh");
+    info.additional_info(is_curves ? "goo_material_prepass_curves" : "goo_material_prepass_mesh");
     if (GPU_material_flag_get(gpumat, GPU_MATFLAG_SET_DEPTH)) {
       info.define("GOO_USE_SET_DEPTH");
       info.depth_write(DepthWrite::ANY);
+    }
+  }
+  else if (is_shadow) {
+    info.additional_info(is_curves ? "goo_material_shadow_curves" : "goo_material_shadow_mesh");
+  }
+  else {
+    info.additional_info(is_curves ? "goo_material_surface_curves" : "goo_material_surface_mesh");
+    if (GPU_material_flag_get(gpumat, GPU_MATFLAG_SET_DEPTH)) {
+      info.define("GOO_USE_SET_DEPTH");
+      info.depth_write(DepthWrite::ANY);
+    }
+    else {
+      info.early_fragment_test(true);
     }
   }
   info.define("GOO_ENGINE");
@@ -219,7 +232,9 @@ static void codegen_callback(void * /*thunk*/, GPUMaterial *gpumat, GPUCodegenOu
   }
   if (GPU_material_flag_get(gpumat, GPU_MATFLAG_BARYCENTRIC) && !is_world) {
     info.define("USE_BARYCENTRICS");
-    info.builtins(BuiltinBits::BARYCENTRIC_COORD);
+    if (!is_curves) {
+      info.builtins(BuiltinBits::BARYCENTRIC_COORD);
+    }
   }
 
   SlotAllocator slots;
@@ -241,6 +256,18 @@ static void codegen_callback(void * /*thunk*/, GPUMaterial *gpumat, GPUCodegenOu
       global_vars << iface.name << " " << iface.instance_name << ";\n";
       info.vertex_out_interfaces_.clear();
     }
+  }
+  else if (is_curves) {
+    for (auto &vert_in : vertex_inputs) {
+      if (vert_in.name == "orco") {
+        global_vars << vert_in.type << " " << vert_in.name << ";\n";
+      }
+      else {
+        info.sampler(
+            slots.get_next_sampler(), ImageType::FloatBuffer, vert_in.name, Frequency::BATCH);
+      }
+    }
+    vertex_inputs.clear();
   }
   else {
     for (auto &vert_in : vertex_inputs) {
@@ -287,13 +314,20 @@ static void codegen_callback(void * /*thunk*/, GPUMaterial *gpumat, GPUCodegenOu
   generated_resource_header += "#endif\n\n";
   info.generated_sources.append({"goo_nodetree_type_lib.glsl", {}, generated_resource_header});
 
-  /* Vertex stage: attribute loading + (optional) displacement for meshes. */
+  /* Vertex stage: attribute loading + (optional) displacement for meshes & curves. */
   if (!is_world) {
     std::stringstream vert_gen;
-    vert_gen << "void attrib_load(MeshVertex domain)" << attr_load.str();
+    if (is_curves) {
+      vert_gen << global_vars.str();
+      vert_gen << "void attrib_load(CurvesPoint domain)" << attr_load.str();
+    }
+    else {
+      vert_gen << "void attrib_load(MeshVertex domain)" << attr_load.str();
+    }
 
-    Vector<StringRefNull> dependencies = {"goo_geom_types_lib.glsl",
-                                          "goo_attributes_mesh_lib.glsl"};
+    Vector<StringRefNull> dependencies = {
+        "goo_geom_types_lib.glsl",
+        is_curves ? "goo_attributes_curves_lib.glsl" : "goo_attributes_mesh_lib.glsl"};
     const bool use_vertex_displacement = !codegen.displacement.empty() &&
                                          ELEM(GPU_material_get_material(gpumat) ?
                                                   GPU_material_get_material(gpumat)
@@ -442,6 +476,21 @@ GPUMaterial *MaterialModule::prepass_get(Material *ma, bool deferred_compilation
 GPUMaterial *MaterialModule::shadow_get(Material *ma, bool deferred_compilation)
 {
   return material_variant_get(ma, GOO_MAT_SHADOW_MESH, deferred_compilation, queued_count);
+}
+
+GPUMaterial *MaterialModule::curves_surface_get(Material *ma, bool deferred_compilation)
+{
+  return material_variant_get(ma, GOO_MAT_SURFACE_CURVES, deferred_compilation, queued_count);
+}
+
+GPUMaterial *MaterialModule::curves_prepass_get(Material *ma, bool deferred_compilation)
+{
+  return material_variant_get(ma, GOO_MAT_PREPASS_CURVES, deferred_compilation, queued_count);
+}
+
+GPUMaterial *MaterialModule::curves_shadow_get(Material *ma, bool deferred_compilation)
+{
+  return material_variant_get(ma, GOO_MAT_SHADOW_CURVES, deferred_compilation, queued_count);
 }
 
 }  // namespace blender::goo

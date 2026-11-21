@@ -50,4 +50,10 @@ void main()
       discard;
     }
   }
+
+#ifdef GOO_USE_SET_DEPTH
+  if (g_goo_frag_depth_set) {
+    gl_FragDepth = g_goo_frag_depth;
+  }
+#endif
 }

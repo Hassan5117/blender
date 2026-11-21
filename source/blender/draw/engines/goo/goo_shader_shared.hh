@@ -58,6 +58,38 @@ struct [[host_shared]] GooShadowBlock {
   struct GooShadowSlice slices[GOO_MAX_SHADOW_SLICES];
 };
 
+struct [[host_shared]] GooPassBlock {
+  int normal_id;
+  int position_id;
+  int diff_dir_id;
+  int diff_col_id;
+
+  int gloss_dir_id;
+  int gloss_col_id;
+  int emit_id;
+  int env_id;
+
+  int shadow_id;
+  int ao_id;
+  int aov_color_id;
+  int aov_color_len;
+
+  int depth_id;
+  int mist_id;
+  int aov_value_id;
+  int aov_value_len;
+
+  int color_layer_count;
+  int value_layer_count;
+  int crypto_flags;
+  int crypto_levels;
+
+  /** x: mist_scale, y: mist_bias, z: mist_exponent, w: env_fallback_enabled (>0.5 if no world shader). */
+  float4 mist_params;
+  float4 env_fallback;
+  uint4 aov_hash[GOO_AOV_MAX / 4];
+};
+
 #ifndef GPU_SHADER
 }  // namespace blender::goo
 #endif

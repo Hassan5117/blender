@@ -26,6 +26,8 @@ class ShaderModule {
   gpu::StaticShader surface_flat = {"goo_surface_flat"};
   gpu::StaticShader shadow_mesh = {"goo_shadow_mesh"};
   gpu::StaticShader shadow_id_mesh = {"goo_shadow_id_mesh"};
+  gpu::StaticShader shadow_curves = {"goo_shadow_curves"};
+  gpu::StaticShader shadow_id_curves = {"goo_shadow_id_curves"};
 
   /* Bloom (ported from Goo 4.4 `eevee_legacy_bloom_*`). */
   gpu::StaticShader bloom_blit_hq = {"goo_bloom_blit_hq"};
@@ -34,13 +36,16 @@ class ShaderModule {
   gpu::StaticShader bloom_upsample_hq = {"goo_bloom_upsample_hq"};
   gpu::StaticShader bloom_resolve_hq = {"goo_bloom_resolve_hq"};
 
-  /* GTAO, TAA, and Film Resolve/Overscan. */
+  /* GTAO, TAA, Film Resolve/Overscan, and Render Passes / Cryptomatte. */
   gpu::StaticShader effect_gtao = {"goo_effect_gtao"};
   gpu::StaticShader taa_accum = {"goo_taa_accum"};
   gpu::StaticShader taa_blend = {"goo_taa_blend"};
   gpu::StaticShader taa_reproject = {"goo_taa_reproject"};
   gpu::StaticShader film_resolve = {"goo_film_resolve"};
   gpu::StaticShader film_crop_depth = {"goo_film_crop_depth"};
+  gpu::StaticShader pass_accum = {"goo_pass_accum"};
+  gpu::StaticShader cryptomatte_sort = {"goo_cryptomatte_sort"};
+  gpu::StaticShader pass_display = {"goo_pass_display"};
 
   UtilityTexture utility_tx;
 

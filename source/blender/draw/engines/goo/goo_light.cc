@@ -23,6 +23,7 @@
 #include "GPU_texture.hh"
 
 #include "draw_cache.hh"
+#include "draw_common.hh"
 
 #include "../eevee/eevee_defines.hh"
 
@@ -55,7 +56,7 @@ static float4x4 make_view_matrix(const float3 &axis_x,
   return v;
 }
 
-void LightModule::begin_sync(const Scene *scene, float4 world_ambient)
+void LightModule::begin_sync(const Scene *scene, float4 world_ambient, float ao_pass_distance)
 {
   light_buf_.light_count = 0;
   light_buf_.shadow_slice_count = 0;
@@ -72,10 +73,14 @@ void LightModule::begin_sync(const Scene *scene, float4 world_ambient)
       gtao_flags |= GOO_GTAO_FLAG_BOUNCE;
     }
   }
+  float gtao_dist = ((gtao_flags & GOO_GTAO_FLAG_ENABLED) != 0 && scene != nullptr) ?
+                        std::max(scene->eevee.gtao_distance, 0.0f) :
+                        0.0f;
+  if (gtao_dist <= 0.0f && ao_pass_distance > 0.0f) {
+    gtao_dist = ao_pass_distance;
+  }
   light_buf_.gtao_params = float4(
-      ((gtao_flags & GOO_GTAO_FLAG_ENABLED) != 0 && scene != nullptr) ?
-          std::max(scene->eevee.gtao_distance, 0.0f) :
-          0.0f,
+      gtao_dist,
       scene ? std::max(scene->eevee.gtao_factor, 0.0f) : 1.0f,
       scene ? std::clamp(scene->eevee.goo_gtao_quality, 0.0f, 1.0f) : 0.25f,
       float(gtao_flags));
@@ -154,16 +159,22 @@ void LightModule::begin_sync(const Scene *scene, float4 world_ambient)
   shadow_nocull_sub_->state_set(DRW_STATE_WRITE_COLOR | DRW_STATE_WRITE_DEPTH |
                                 DRW_STATE_DEPTH_LESS_EQUAL);
   shadow_nocull_sub_->shader_set(ShaderModule::get().shadow_id_mesh.get());
+
+  shadow_curves_sub_ = &shadow_ps_.sub("ShadowCurves");
+  shadow_curves_sub_->state_set(DRW_STATE_WRITE_COLOR | DRW_STATE_WRITE_DEPTH |
+                                DRW_STATE_DEPTH_LESS_EQUAL);
+  shadow_curves_sub_->shader_set(ShaderModule::get().shadow_id_curves.get());
 }
 
 PassMain::Sub &LightModule::shadow_mat_sub_get(Manager &manager,
                                                const Material *ma,
                                                GPUMaterial *shadow_gpumat,
-                                               bool deferred)
+                                               bool deferred,
+                                               bool is_curves)
 {
   return *shadow_mat_subs_.lookup_or_add_cb(shadow_gpumat, [&]() {
     PassMain::Sub &sub = shadow_ps_.sub(ma ? ma->id.name + 2 : "ShadowMat");
-    const bool cull_back = ma && (ma->blend_flag & MA_BL_CULL_BACKFACE_SHADOW) != 0;
+    const bool cull_back = !is_curves && ma && (ma->blend_flag & MA_BL_CULL_BACKFACE_SHADOW) != 0;
     DRWState state = DRW_STATE_WRITE_COLOR | DRW_STATE_WRITE_DEPTH | DRW_STATE_DEPTH_LESS_EQUAL;
     if (cull_back) {
       state |= DRW_STATE_CULL_BACK;
@@ -222,6 +233,43 @@ void LightModule::caster_slot_sync(Manager &manager,
   const bool cull_back = ma && (ma->blend_flag & MA_BL_CULL_BACKFACE_SHADOW) != 0;
   PassMain::Sub *sub = cull_back ? shadow_cull_sub_ : shadow_nocull_sub_;
   sub->draw(geom, handle);
+}
+
+void LightModule::caster_curves_sync(Manager &manager,
+                                     const Scene *scene,
+                                     const ObjectRef &ob_ref,
+                                     ParticleSystem *psys,
+                                     ModifierData *md,
+                                     const Material *ma,
+                                     GPUMaterial *shadow_gpumat,
+                                     ResourceHandleRange handle,
+                                     bool deferred)
+{
+  if (!use_shadows_) {
+    return;
+  }
+  const int shadow_mode = ma ? int(ma->blend_shadow) : int(MA_BS_SOLID);
+  if (shadow_mode == MA_BS_NONE) {
+    return;
+  }
+  const bool use_mat_shadow = ELEM(shadow_mode, MA_BS_CLIP, MA_BS_HASHED) &&
+                              shadow_gpumat != nullptr;
+  PassMain::Sub &parent_sub = use_mat_shadow ?
+                                  shadow_mat_sub_get(manager, ma, shadow_gpumat, deferred, true) :
+                                  *shadow_curves_sub_;
+  PassMain::Sub &call_sub = parent_sub.sub("ShadowCurves");
+  GPUMaterial *setup_mat = use_mat_shadow ? shadow_gpumat : nullptr;
+  gpu::Batch *geom = nullptr;
+  if (psys != nullptr) {
+    geom = hair_sub_pass_setup(call_sub, scene, ob_ref, psys, md, setup_mat);
+  }
+  else {
+    const char *unused_err = nullptr;
+    geom = curves_sub_pass_setup(call_sub, scene, ob_ref.object, unused_err, setup_mat);
+  }
+  if (geom != nullptr) {
+    call_sub.draw(geom, handle);
+  }
 }
 
 void LightModule::light_sync(Object *ob, const View &camera_view)

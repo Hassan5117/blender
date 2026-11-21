@@ -19,7 +19,16 @@
 #include "goo_bloom.hh"
 #include "goo_light.hh"
 #include "goo_material.hh"
+#include "goo_render_pass.hh"
 #include "goo_sampling.hh"
+
+namespace blender {
+struct ModifierData;
+struct ParticleSystem;
+struct RenderLayer;
+struct RenderResult;
+struct ViewLayer;
+}  // namespace blender
 
 namespace blender::goo {
 
@@ -40,6 +49,7 @@ class Instance : public DrawEngine {
   PassMain prepass_ps_ = {"Goo.Prepass"};
   PassMain::Sub *prepass_cull_sub_ = nullptr;
   PassMain::Sub *prepass_nocull_sub_ = nullptr;
+  PassMain::Sub *prepass_curves_sub_ = nullptr;
   Map<GPUMaterial *, PassMain::Sub *> prepass_mat_subs_;
 
   /** Surface pass. One sub-pass per material. */
@@ -56,10 +66,14 @@ class Instance : public DrawEngine {
   bool has_blend_draws_ = false;
   bool has_blend_refract_draws_ = false;
 
-  /** Procedural World background pass. */
+  /** Procedural World background pass (and Env pass-only fallback under film_transparent). */
   PassSimple world_ps_ = {"Goo.World"};
+  PassSimple world_env_only_ps_ = {"Goo.WorldEnvOnly"};
   bool has_world_shader_ = false;
   float4 world_color_ = float4(0.05f, 0.05f, 0.05f, 1.0f);
+  bool use_sky_ = true;
+  bool use_solid_ = true;
+  bool use_strand_ = true;
 
   /** Node-tree materials (one sub-pass per GPUMaterial). */
   MaterialModule materials;
@@ -67,6 +81,8 @@ class Instance : public DrawEngine {
 
   /** Scene lights + shadow atlas. */
   LightModule lights;
+  /** Render passes, Shader AOVs, and Cryptomatte. */
+  RenderPassModule render_passes;
   bool is_image_render_ = false;
   bool is_viewport_image_render_ = false;
 
@@ -147,9 +163,20 @@ class Instance : public DrawEngine {
   /** Draw into the given color/depth textures (used by viewport and F12). */
   void draw_to(Manager &manager, View &view, gpu::Texture *color, gpu::Texture *depth);
 
+  void read_render_passes(RenderLayer *layer,
+                          const ViewLayer *view_layer,
+                          const char *viewname,
+                          const rcti &rect);
+  void store_metadata(RenderResult *render_result);
+
  private:
   void compute_extents(const Scene *scene, int2 output_extent);
   float4x4 overscan_winmat(const float4x4 &base_winmat) const;
+  void sync_curves_object(ObjectRef &ob_ref,
+                          Manager &manager,
+                          ParticleSystem *psys,
+                          ModifierData *md,
+                          ResourceHandleRange handle);
   void render_single_sample(Manager &manager,
                             View &sample_view,
                             gpu::Texture *dst_color,
@@ -157,15 +184,26 @@ class Instance : public DrawEngine {
                             int sample_index,
                             bool gtao_active);
   PassMain::Sub &material_sub_get(const Material *ma);
-  PassMain::Sub &gpumat_sub_get(Manager &manager, GPUMaterial *gpumat, const Material *ma);
-  PassMain::Sub &refract_sub_get(Manager &manager, GPUMaterial *gpumat, const Material *ma);
-  PassMain::Sub &prepass_mat_sub_get(Manager &manager, GPUMaterial *gpumat, const Material *ma);
+  PassMain::Sub &gpumat_sub_get(Manager &manager,
+                                GPUMaterial *gpumat,
+                                const Material *ma,
+                                bool is_curves = false);
+  PassMain::Sub &refract_sub_get(Manager &manager,
+                                 GPUMaterial *gpumat,
+                                 const Material *ma,
+                                 bool is_curves = false);
+  PassMain::Sub &prepass_mat_sub_get(Manager &manager,
+                                     GPUMaterial *gpumat,
+                                     const Material *ma,
+                                     bool is_curves = false);
   void configure_material_sub(PassMain::Sub &sub,
                               Manager &manager,
                               GPUMaterial *gpumat,
                               const Material *ma,
                               bool is_refract,
-                              bool is_prepass);
+                              bool is_prepass,
+                              bool is_blend = false,
+                              bool is_curves = false);
 };
 
 }  // namespace blender::goo

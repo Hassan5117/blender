@@ -17,6 +17,14 @@ struct MeshVertex {
   float3 orco_default;
 };
 
+struct CurvesPoint {
+  int curve_id;
+  int point_id;
+  int curve_segment;
+  /* Default derived from local position. */
+  float3 orco_default;
+};
+
 struct WorldPoint {
   float3 lP;
 };

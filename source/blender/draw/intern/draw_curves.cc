@@ -40,14 +40,10 @@ using CurvesInfosBuf = UniformBuffer<CurvesInfos>;
 
 CurvesInfosBuf &CurvesUniformBufPool::alloc()
 {
-  CurvesInfosBuf *ptr;
   if (used >= ubos.size()) {
     ubos.append(std::make_unique<CurvesInfosBuf>());
-    ptr = ubos.last().get();
   }
-  else {
-    ptr = ubos[used++].get();
-  }
+  CurvesInfosBuf *ptr = ubos[used++].get();
 
   memset(ptr->data(), 0, sizeof(CurvesInfos));
   return *ptr;

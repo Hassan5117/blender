@@ -11,6 +11,7 @@ FRAGMENT_SHADER_CREATE_INFO(goo_material_surface_mesh)
 #include "goo_nodetree_lib.glsl"
 
 #include "goo_nodetree_frag_lib.glsl"
+#include "goo_material_surface_lib.glsl"
 
 void main()
 {
@@ -27,6 +28,12 @@ void main()
   g_data.ray_length = distance(g_data.P, drw_view_position());
   g_data.barycentric_coords = float2(0.0f);
   g_data.barycentric_dists = float3(0.0f);
+#ifdef USE_BARYCENTRICS
+  g_data.barycentric_coords = gpu_BaryCoord.xy;
+  float wp_delta = length(gpu_dfdx(interp.P)) + length(gpu_dfdy(interp.P));
+  float bc_delta = max(length(gpu_dfdx(gpu_BaryCoord)) + length(gpu_dfdy(gpu_BaryCoord)), 1e-6f);
+  g_data.barycentric_dists = (wp_delta / bc_delta) * (1.0f - gpu_BaryCoord);
+#endif
   if (!gl_FrontFacing) {
     g_data.N = -g_data.N;
     g_data.Ni = -g_data.Ni;
@@ -35,39 +42,5 @@ void main()
     g_data.Ng = -g_data.Ng;
   }
 
-  fragment_displacement();
-
-  g_goo_frag_depth = gl_FragCoord.z;
-  g_goo_frag_depth_set = false;
-
-  nodetree_surface(0.5f);
-
-  float holdout = saturate(g_goo_holdout);
-  float alpha = saturate(1.0f - reduce_add(g_goo_transmittance) * (1.0f / 3.0f)) * (1.0f - holdout);
-  float3 final_radiance = g_goo_radiance * (1.0f - holdout);
-
-  if ((goo_material_flags & GOO_MAT_FLAG_ALPHA_CLIP) != 0) {
-    if (alpha <= goo_alpha_threshold) {
-      discard;
-    }
-    out_color = float4(final_radiance / max(alpha, 1e-4f), 1.0f);
-  }
-  else if ((goo_material_flags & GOO_MAT_FLAG_ALPHA_HASHED) != 0) {
-    if (alpha < goo_hashed_alpha_threshold(g_data.P)) {
-      discard;
-    }
-    out_color = float4(final_radiance / max(alpha, 1e-4f), 1.0f);
-  }
-  else if ((goo_material_flags & GOO_MAT_FLAG_ALPHA_BLEND) != 0) {
-    out_color = float4(final_radiance, alpha);
-  }
-  else {
-    out_color = float4(final_radiance, 1.0f - holdout);
-  }
-
-#ifdef GOO_USE_SET_DEPTH
-  if (g_goo_frag_depth_set) {
-    gl_FragDepth = g_goo_frag_depth;
-  }
-#endif
+  out_color = goo_surface_frag_exec();
 }

@@ -22,6 +22,7 @@
 #include "infos/goo_material_infos.hh"
 
 SHADER_LIBRARY_CREATE_INFO(goo_lighting)
+SHADER_LIBRARY_CREATE_INFO(goo_render_passes)
 SHADER_LIBRARY_CREATE_INFO(UtilityTexture)
 SHADER_LIBRARY_CREATE_INFO(draw_view)
 
@@ -365,12 +366,19 @@ void scene_time_uniforms(float &seconds, float &frame)
 /** \} */
 
 /* -------------------------------------------------------------------- */
-/** \name Accumulators
+/** \name Accumulators & Render Passes / AOVs
  * \{ */
 
 float3 g_goo_radiance;
 float3 g_goo_transmittance;
-float g_goo_holdout;
+float g_holdout;
+float3 g_goo_diff_light;
+float3 g_goo_diff_color;
+float3 g_goo_spec_light;
+float3 g_goo_spec_color;
+float3 g_goo_emission;
+float g_goo_shadow_sum;
+float g_goo_shadow_weight;
 float g_goo_frag_depth;
 bool g_goo_frag_depth_set;
 
@@ -378,7 +386,56 @@ void closure_weights_reset(float /*closure_rand*/)
 {
   g_goo_radiance = float3(0.0f);
   g_goo_transmittance = float3(0.0f);
-  g_goo_holdout = 0.0f;
+  g_holdout = 0.0f;
+  g_goo_diff_light = float3(0.0f);
+  g_goo_diff_color = float3(0.0f);
+  g_goo_spec_light = float3(0.0f);
+  g_goo_spec_color = float3(0.0f);
+  g_goo_emission = float3(0.0f);
+}
+
+void goo_pass_accum_reset()
+{
+  g_goo_shadow_sum = 0.0f;
+  g_goo_shadow_weight = 0.0f;
+}
+
+void output_aov(int2 texel, float4 color, float value, uint hash, float holdout, uint ob_flag)
+{
+#ifdef GOO_PASS_WRITE
+  if ((goo_material_flags & GOO_MAT_FLAG_NO_PASS_WRITE) != 0) {
+    return;
+  }
+  uint total_len = uint(goo_pass_buf.aov_color_len + goo_pass_buf.aov_value_len);
+  if (total_len == 0u) {
+    return;
+  }
+
+  uint hash_index = 0u;
+  for (; hash_index < uint(GOO_AOV_MAX) && hash_index < total_len; hash_index += 4u) {
+    bool4 cmp_mask = equal(goo_pass_buf.aov_hash[hash_index >> 2u], uint4(hash));
+    if (any(cmp_mask)) {
+      hash_index += (cmp_mask[0] ? 0u : (cmp_mask[1] ? 1u : (cmp_mask[2] ? 2u : 3u)));
+      break;
+    }
+  }
+
+  if (hash_index < total_len) {
+    if ((ob_flag & uint(OBJECT_HOLDOUT)) != 0u) {
+      holdout = 1.0f;
+    }
+    float att = 1.0f - saturate(holdout);
+    bool is_value = hash_index >= uint(goo_pass_buf.aov_color_len);
+    if (is_value) {
+      int layer = int(hash_index) - goo_pass_buf.aov_color_len;
+      imageStoreFast(goo_rp_value_img, int3(texel, layer), float4(value * att));
+    }
+    else {
+      int layer = goo_pass_buf.aov_color_id + int(hash_index);
+      imageStoreFast(goo_rp_color_img, int3(texel, layer), color * att);
+    }
+  }
+#endif
 }
 
 void goo_set_depth(float z_in)
@@ -626,13 +683,15 @@ float goo_contact_shadow(GooLightData ld, float3 P, float shadow_vis)
 #endif
 }
 
-float goo_scene_diffuse_ao(float3 N, float3 albedo)
+float goo_gtao_eval_vis(float3 N, float3 albedo, bool respect_enable_flag)
 {
 #ifdef MAT_GEOM_WORLD
   return 1.0f;
 #else
   int flags = int(goo_light_buf.gtao_params.w + 0.5f);
-  if ((flags & GOO_GTAO_FLAG_ENABLED) == 0 || goo_light_buf.gtao_params.x <= 0.0f) {
+  if (goo_light_buf.gtao_params.x <= 0.0f ||
+      (respect_enable_flag && (flags & GOO_GTAO_FLAG_ENABLED) == 0))
+  {
     return 1.0f;
   }
 
@@ -660,18 +719,66 @@ float goo_scene_diffuse_ao(float3 N, float3 albedo)
 #endif
 }
 
-void goo_eval_light(int i, float3 P, float3 N, float &attenuation, float3 &L)
+float goo_scene_diffuse_ao(float3 N, float3 albedo)
 {
-  goo_eval_light_unshadowed(i, P, attenuation, L);
-  if (attenuation > 0.0f) {
+  return goo_gtao_eval_vis(N, albedo, true);
+}
+
+float goo_eval_ao_pass(float3 N, float3 albedo)
+{
+  return goo_gtao_eval_vis(N, albedo, false);
+}
+
+void goo_eval_light_shadowed(
+    int i, float3 P, float3 N, float &att_unshadowed, float &vis, float3 &L)
+{
+  goo_eval_light_unshadowed(i, P, att_unshadowed, L);
+  vis = 1.0f;
+  if (att_unshadowed > 0.0f) {
     GooLightData ld = goo_light_buf.lights[i];
     if (goo_light_group_match(ld.light_group_bits, goo_light_group_shadows)) {
       int shadow_id_mode = ((goo_material_flags & GOO_MAT_FLAG_CHECK_SHADOW_ID) != 0) ? 1 : 0;
-      float vis = goo_light_shadow(ld, P, N, shadow_id_mode);
+      vis = goo_light_shadow(ld, P, N, shadow_id_mode);
       vis *= goo_contact_shadow(ld, P, vis);
-      attenuation *= vis;
     }
   }
+}
+
+void goo_eval_light(int i, float3 P, float3 N, float &attenuation, float3 &L)
+{
+  float att_unshadowed;
+  float vis;
+  goo_eval_light_shadowed(i, P, N, att_unshadowed, vis, L);
+  attenuation = att_unshadowed * vis;
+}
+
+float goo_eval_shadow_pass(float3 P, float3 N)
+{
+  if (g_goo_shadow_weight > 1e-5f) {
+    return saturate(g_goo_shadow_sum / g_goo_shadow_weight);
+  }
+  float sum = 0.0f;
+  float weight = 0.0f;
+  float3 n_n = safe_normalize(N);
+  for (int i = 0; i < goo_light_buf.light_count; i++) {
+    GooLightData ld = goo_light_buf.lights[i];
+    if (!goo_light_group_match(ld.light_group_bits, goo_light_groups)) {
+      continue;
+    }
+    float att_unshadowed;
+    float vis;
+    float3 L;
+    goo_eval_light_shadowed(i, P, n_n, att_unshadowed, vis, L);
+    float ndotl = max(0.0f, dot(n_n, L));
+    if (att_unshadowed > 0.0f && ndotl > 0.0f) {
+      float light_fac = max(ld.color_energy.r, max(ld.color_energy.g, ld.color_energy.b)) *
+                        ld.spot_shadow.w * att_unshadowed * ndotl;
+      sum += vis * light_fac;
+      weight += light_fac;
+    }
+  }
+  return (weight > 1e-5f) ? saturate(sum / weight) :
+                            ((goo_light_buf.light_count > 0) ? 0.0f : 1.0f);
 }
 
 float3 goo_diffuse_light(float3 N, float3 P, float3 albedo)
@@ -682,12 +789,19 @@ float3 goo_diffuse_light(float3 N, float3 P, float3 albedo)
     if (!goo_light_group_match(ld.light_group_bits, goo_light_groups)) {
       continue;
     }
-    float att;
+    float att_unshadowed;
+    float vis;
     float3 L;
-    goo_eval_light(i, P, N, att, L);
-    if (att > 0.0f) {
+    goo_eval_light_shadowed(i, P, N, att_unshadowed, vis, L);
+    float ndotl = max(0.0f, dot(N, L));
+    if (att_unshadowed > 0.0f && ndotl > 0.0f) {
+      float light_fac = max(ld.color_energy.r, max(ld.color_energy.g, ld.color_energy.b)) *
+                        ld.spot_shadow.w * att_unshadowed * ndotl;
+      g_goo_shadow_sum += vis * light_fac;
+      g_goo_shadow_weight += light_fac;
+      float att = att_unshadowed * vis;
       float3 radiance = ld.color_energy.rgb * ld.spot_shadow.w;
-      light += radiance * att * max(0.0f, dot(N, L)) * (1.0f / 3.14159265f);
+      light += radiance * att * ndotl * (1.0f / 3.14159265f);
     }
   }
   return light;
@@ -704,14 +818,21 @@ float3 goo_specular_light(float3 N, float3 P, float roughness)
     if (!goo_light_group_match(ld.light_group_bits, goo_light_groups)) {
       continue;
     }
-    float att;
+    float att_unshadowed;
+    float vis;
     float3 L;
-    goo_eval_light(i, P, N, att, L);
-    if (att > 0.0f) {
+    goo_eval_light_shadowed(i, P, N, att_unshadowed, vis, L);
+    float ndotl = max(0.0f, dot(N, L));
+    if (att_unshadowed > 0.0f && ndotl > 0.0f) {
+      float light_fac = max(ld.color_energy.r, max(ld.color_energy.g, ld.color_energy.b)) *
+                        ld.spot_shadow.w * att_unshadowed * ndotl;
+      g_goo_shadow_sum += vis * light_fac;
+      g_goo_shadow_weight += light_fac;
+      float att = att_unshadowed * vis;
       float3 H = normalize(L + V);
       float spec = pow(max(0.0f, dot(N, H)), shininess) * (shininess + 8.0f) / 25.132741f;
       float3 radiance = ld.color_energy.rgb * ld.extra.x;
-      light += radiance * att * spec * max(0.0f, dot(N, L));
+      light += radiance * att * spec * ndotl;
     }
   }
   return light;
@@ -870,30 +991,38 @@ void goo_screenspace_curvature(float iiterations,
 
 Closure closure_eval(ClosureDiffuse diffuse)
 {
-  g_goo_radiance += diffuse.color * diffuse.weight *
-                    goo_diffuse_light(diffuse.N, g_data.P, diffuse.color);
+  float3 light = goo_diffuse_light(diffuse.N, g_data.P, diffuse.color);
+  g_goo_radiance += diffuse.color * diffuse.weight * light;
+  g_goo_diff_color += diffuse.color * diffuse.weight;
+  g_goo_diff_light += light * diffuse.weight;
   return Closure(0);
 }
 
 Closure closure_eval(ClosureSubsurface diffuse)
 {
   /* TODO(goo-port): Goo 4.4 SSS. Approximated as diffuse. */
-  g_goo_radiance += diffuse.color * diffuse.weight *
-                    goo_diffuse_light(diffuse.N, g_data.P, diffuse.color);
+  float3 light = goo_diffuse_light(diffuse.N, g_data.P, diffuse.color);
+  g_goo_radiance += diffuse.color * diffuse.weight * light;
+  g_goo_diff_color += diffuse.color * diffuse.weight;
+  g_goo_diff_light += light * diffuse.weight;
   return Closure(0);
 }
 
 Closure closure_eval(ClosureTranslucent translucent)
 {
-  g_goo_radiance += translucent.color * translucent.weight *
-                    goo_diffuse_light(-translucent.N, g_data.P, translucent.color);
+  float3 light = goo_diffuse_light(-translucent.N, g_data.P, translucent.color);
+  g_goo_radiance += translucent.color * translucent.weight * light;
+  g_goo_diff_color += translucent.color * translucent.weight;
+  g_goo_diff_light += light * translucent.weight;
   return Closure(0);
 }
 
 Closure closure_eval(ClosureReflection reflection)
 {
-  g_goo_radiance += reflection.color * reflection.weight *
-                    goo_specular_light(reflection.N, g_data.P, reflection.roughness);
+  float3 light = goo_specular_light(reflection.N, g_data.P, reflection.roughness);
+  g_goo_radiance += reflection.color * reflection.weight * light;
+  g_goo_spec_color += reflection.color * reflection.weight;
+  g_goo_spec_light += light * reflection.weight;
   return Closure(0);
 }
 
@@ -912,13 +1041,14 @@ Closure closure_eval(ClosureThinRefraction refraction)
 Closure closure_eval(ClosureEmission emission)
 {
   g_goo_radiance += emission.emission * emission.weight;
+  g_goo_emission += emission.emission * emission.weight;
   return Closure(0);
 }
 
 Closure closure_eval(ClosureTransparency transparency)
 {
   g_goo_transmittance += transparency.transmittance * transparency.weight;
-  g_goo_holdout += transparency.holdout * transparency.weight;
+  g_holdout += transparency.holdout * transparency.weight;
   return Closure(0);
 }
 
@@ -932,8 +1062,21 @@ Closure closure_eval(ClosureVolumeAbsorption /*volume_absorption*/)
   return Closure(0);
 }
 
-Closure closure_eval(ClosureHair /*hair*/)
+Closure closure_eval(ClosureHair hair)
 {
+  float3 V = drw_world_incident_vector(g_data.P);
+  float3 T = safe_normalize(hair.T);
+  float3 B = cross(V, T);
+  float3 N = (dot(B, B) > 1e-6f) ? safe_normalize(cross(T, normalize(B))) : g_data.N;
+  float3 diff_light = goo_diffuse_light(N, g_data.P, hair.color);
+  float rough = clamp((hair.roughness.x + hair.roughness.y) * 0.5f, 0.05f, 1.0f);
+  float3 spec_light = goo_specular_light(N, g_data.P, rough);
+  float3 spec_tint = mix(float3(0.25f), hair.color, 0.5f);
+  g_goo_radiance += hair.weight * (hair.color * diff_light + spec_tint * spec_light);
+  g_goo_diff_color += hair.color * hair.weight;
+  g_goo_diff_light += diff_light * hair.weight;
+  g_goo_spec_color += spec_tint * hair.weight;
+  g_goo_spec_light += spec_light * hair.weight;
   return Closure(0);
 }
 
@@ -1014,5 +1157,68 @@ float4 closure_to_rgba(Closure /*cl*/)
   closure_weights_reset(0.0f);
   return result;
 }
+
+void goo_store_surface_passes(int2 texel, float holdout, uint resource_id)
+{
+#if defined(GOO_PASS_WRITE) && !defined(MAT_GEOM_WORLD)
+  if ((goo_material_flags & GOO_MAT_FLAG_NO_PASS_WRITE) != 0) {
+    return;
+  }
+
+  float vis = 1.0f - saturate(holdout);
+  if (goo_pass_buf.normal_id >= 0) {
+    imageStoreFast(goo_rp_color_img,
+                   int3(texel, goo_pass_buf.normal_id),
+                   float4(safe_normalize(g_data.N) * vis, 1.0f));
+  }
+  if (goo_pass_buf.position_id >= 0) {
+    imageStoreFast(
+        goo_rp_color_img, int3(texel, goo_pass_buf.position_id), float4(g_data.P * vis, 1.0f));
+  }
+  if (goo_pass_buf.diff_dir_id >= 0) {
+    imageStoreFast(goo_rp_color_img,
+                   int3(texel, goo_pass_buf.diff_dir_id),
+                   float4(g_goo_diff_light * vis, 1.0f));
+  }
+  if (goo_pass_buf.diff_col_id >= 0) {
+    imageStoreFast(goo_rp_color_img,
+                   int3(texel, goo_pass_buf.diff_col_id),
+                   float4(g_goo_diff_color * vis, 1.0f));
+  }
+  if (goo_pass_buf.gloss_dir_id >= 0) {
+    imageStoreFast(goo_rp_color_img,
+                   int3(texel, goo_pass_buf.gloss_dir_id),
+                   float4(g_goo_spec_light * vis, 1.0f));
+  }
+  if (goo_pass_buf.gloss_col_id >= 0) {
+    imageStoreFast(goo_rp_color_img,
+                   int3(texel, goo_pass_buf.gloss_col_id),
+                   float4(g_goo_spec_color * vis, 1.0f));
+  }
+  if (goo_pass_buf.emit_id >= 0) {
+    imageStoreFast(goo_rp_color_img,
+                   int3(texel, goo_pass_buf.emit_id),
+                   float4(g_goo_emission * vis, 1.0f));
+  }
+  if (goo_pass_buf.shadow_id >= 0) {
+    float shad = goo_eval_shadow_pass(g_data.P, g_data.N);
+    imageStoreFast(goo_rp_color_img,
+                   int3(texel, goo_pass_buf.shadow_id),
+                   float4(float3(shad) * vis, 1.0f));
+  }
+  if (goo_pass_buf.ao_id >= 0) {
+    float ao = goo_eval_ao_pass(g_data.N, max(g_goo_diff_color, float3(0.5f)));
+    imageStoreFast(
+        goo_rp_color_img, int3(texel, goo_pass_buf.ao_id), float4(float3(ao) * vis, 1.0f));
+  }
+  if (goo_pass_buf.crypto_flags != 0 && holdout < 0.999f) {
+    float2 obj_asset = goo_crypto_object_buf[resource_id];
+    imageStoreFast(
+        goo_rp_crypto_img, texel, float4(obj_asset.x, obj_asset.y, goo_material_hash, 1.0f));
+  }
+#endif
+}
+
+/** \} */
 
 /** \} */

@@ -51,6 +51,11 @@ class MaterialModule {
    */
   GPUMaterial *shadow_get(Material *ma, bool deferred_compilation);
 
+  /** Curves / hair surface, prepass, and shadow material variants. */
+  GPUMaterial *curves_surface_get(Material *ma, bool deferred_compilation);
+  GPUMaterial *curves_prepass_get(Material *ma, bool deferred_compilation);
+  GPUMaterial *curves_shadow_get(Material *ma, bool deferred_compilation);
+
   /**
    * Return a compiled world background material for `wo` (or a default world if `wo` is null),
    * or nullptr if it is still compiling or failed.

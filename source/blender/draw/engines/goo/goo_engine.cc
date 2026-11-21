@@ -161,72 +161,80 @@ static bool render_framebuffers_init(const DRWContext *draw_ctx)
   return GPU_framebuffer_check_valid(dfbl->default_fb, nullptr);
 }
 
-static void render_to_image(RenderEngine *engine, RenderLayer *layer, const rcti rect)
-{
-  const DRWContext *draw_ctx = DRW_context_get();
-  if (!render_framebuffers_init(draw_ctx)) {
-    RE_engine_report(engine, RPT_ERROR, "Goo Engine: failed to allocate GPU buffers");
-    return;
-  }
-
-  Depsgraph *depsgraph = draw_ctx->depsgraph;
-  Object *camera_ob = DEG_get_evaluated(depsgraph, RE_GetCamera(engine->re));
-
-  float4x4 winmat, viewinv;
-  RE_GetCameraWindow(engine->re, camera_ob, winmat.ptr());
-  RE_GetCameraModelMatrix(engine->re, camera_ob, viewinv.ptr());
-  const float4x4 viewmat = math::invert(viewinv);
-
-  DRW_cache_restart();
-  draw::View::default_set(viewmat, winmat);
-
-  Instance instance;
-  instance.init();
-
-  draw::Manager &manager = *DRW_manager_get();
-  manager.begin_sync();
-  instance.begin_sync();
-  DRW_render_object_iter(
-      engine,
-      depsgraph,
-      [&](draw::ObjectRef &ob_ref, RenderEngine * /*engine*/, Depsgraph * /*depsgraph*/) {
-        instance.object_sync(ob_ref, manager);
-      });
-  instance.end_sync();
-  manager.end_sync();
-
-  DRW_submission_start();
-  DefaultTextureList *dtxl = draw_ctx->viewport_texture_list_get();
-  DefaultFramebufferList *dfbl = draw_ctx->viewport_framebuffer_list_get();
-  instance.draw_to(manager, draw::View::default_get(), dtxl->color, dtxl->depth);
-  DRW_submission_end();
-
-  const char *viewname = RE_GetActiveRenderView(engine->re);
-  RenderPass *rp = RE_pass_find_by_name(layer, RE_PASSNAME_COMBINED, viewname);
-  if (rp) {
-    GPU_framebuffer_bind(dfbl->default_fb);
-    GPU_framebuffer_read_color(dfbl->default_fb,
-                               rect.xmin,
-                               rect.ymin,
-                               BLI_rcti_size_x(&rect),
-                               BLI_rcti_size_y(&rect),
-                               4,
-                               0,
-                               GPU_DATA_FLOAT,
-                               rp->ibuf->float_data_for_write());
-  }
-}
-
 static void render_update_passes(RenderEngine *engine, Scene *scene, ViewLayer *view_layer)
 {
-  if (view_layer->passflag & SCE_PASS_COMBINED) {
-    RE_engine_register_pass(engine, scene, view_layer, RE_PASSNAME_COMBINED, 4, "RGBA", SOCK_RGBA);
-  }
+  RenderPassModule::update_passes(engine, scene, view_layer);
 }
 
 static void render(RenderEngine *engine, Depsgraph *depsgraph)
 {
-  DRW_render_to_image(engine, depsgraph, render_to_image, [](RenderResult *) {});
+  Instance *instance = nullptr;
+
+  auto render_to_image_cb = [&](RenderEngine *eng, RenderLayer *layer, const rcti rect) {
+    Render *re_ptr = eng->re;
+    const DRWContext *draw_ctx = DRW_context_get();
+    if (!render_framebuffers_init(draw_ctx)) {
+      RE_engine_report(eng, RPT_ERROR, "Goo Engine: failed to allocate GPU buffers");
+      return;
+    }
+
+    Object *camera_ob = DEG_get_evaluated(depsgraph, RE_GetCamera(re_ptr));
+
+    float4x4 winmat, viewinv;
+    RE_GetCameraWindow(re_ptr, camera_ob, winmat.ptr());
+    RE_GetCameraModelMatrix(re_ptr, camera_ob, viewinv.ptr());
+    const float4x4 viewmat = math::invert(viewinv);
+
+    DRW_cache_restart();
+    draw::View::default_set(viewmat, winmat);
+
+    delete instance;
+    instance = new Instance();
+    instance->init();
+
+    draw::Manager &manager = *DRW_manager_get();
+    manager.begin_sync();
+    instance->begin_sync();
+    DRW_render_object_iter(
+        eng,
+        depsgraph,
+        [&](draw::ObjectRef &ob_ref, RenderEngine * /*engine*/, Depsgraph * /*depsgraph*/) {
+          instance->object_sync(ob_ref, manager);
+        });
+    instance->end_sync();
+    manager.end_sync();
+
+    DRW_submission_start();
+    DefaultTextureList *dtxl = draw_ctx->viewport_texture_list_get();
+    DefaultFramebufferList *dfbl = draw_ctx->viewport_framebuffer_list_get();
+    instance->draw_to(manager, draw::View::default_get(), dtxl->color, dtxl->depth);
+    DRW_submission_end();
+
+    const char *viewname = RE_GetActiveRenderView(re_ptr);
+    RenderPass *rp = RE_pass_find_by_name(layer, RE_PASSNAME_COMBINED, viewname);
+    if (rp) {
+      GPU_framebuffer_bind(dfbl->default_fb);
+      GPU_framebuffer_read_color(dfbl->default_fb,
+                                 rect.xmin,
+                                 rect.ymin,
+                                 BLI_rcti_size_x(&rect),
+                                 BLI_rcti_size_y(&rect),
+                                 4,
+                                 0,
+                                 GPU_DATA_FLOAT,
+                                 rp->ibuf->float_data_for_write());
+    }
+    instance->read_render_passes(layer, draw_ctx->view_layer, viewname, rect);
+  };
+
+  auto store_metadata_cb = [&](RenderResult *render_result) {
+    if (instance != nullptr) {
+      instance->store_metadata(render_result);
+    }
+  };
+
+  DRW_render_to_image(engine, depsgraph, render_to_image_cb, store_metadata_cb);
+  delete instance;
 }
 
 /** \} */

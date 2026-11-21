@@ -24,7 +24,9 @@
 
 namespace blender {
 struct Material;
+struct ModifierData;
 struct Object;
+struct ParticleSystem;
 struct Scene;
 }
 
@@ -56,6 +58,7 @@ class LightModule {
   PassMain shadow_ps_ = {"Goo.Shadow"};
   PassMain::Sub *shadow_cull_sub_ = nullptr;
   PassMain::Sub *shadow_nocull_sub_ = nullptr;
+  PassMain::Sub *shadow_curves_sub_ = nullptr;
   Map<GPUMaterial *, PassMain::Sub *> shadow_mat_subs_;
 
   bool use_shadows_ = true;
@@ -65,16 +68,26 @@ class LightModule {
   PassMain::Sub &shadow_mat_sub_get(Manager &manager,
                                     const Material *ma,
                                     GPUMaterial *shadow_gpumat,
-                                    bool deferred);
+                                    bool deferred,
+                                    bool is_curves = false);
 
  public:
-  void begin_sync(const Scene *scene, float4 world_ambient);
+  void begin_sync(const Scene *scene, float4 world_ambient, float ao_pass_distance = 0.0f);
   void caster_slot_sync(Manager &manager,
                         gpu::Batch *geom,
                         const Material *ma,
                         GPUMaterial *shadow_gpumat,
                         ResourceHandleRange handle,
                         bool deferred);
+  void caster_curves_sync(Manager &manager,
+                          const Scene *scene,
+                          const ObjectRef &ob_ref,
+                          ParticleSystem *psys,
+                          ModifierData *md,
+                          const Material *ma,
+                          GPUMaterial *shadow_gpumat,
+                          ResourceHandleRange handle,
+                          bool deferred);
   void light_sync(Object *ob, const View &camera_view);
   void end_sync();
 
@@ -108,6 +121,10 @@ class LightModule {
   {
     return (int(light_buf_.gtao_params.w + 0.5f) & GOO_GTAO_FLAG_ENABLED) != 0 &&
            light_buf_.gtao_params.x > 0.0f;
+  }
+  bool gtao_pass_needed() const
+  {
+    return light_buf_.gtao_params.x > 0.0f;
   }
   float4 gtao_params() const
   {

@@ -34,5 +34,12 @@ void main()
 
   nodetree_surface(0.0f);
 
+#ifdef GOO_PASS_WRITE
+  if (goo_pass_buf.env_id >= 0) {
+    imageStoreFast(
+        goo_rp_color_img, int3(int2(gl_FragCoord.xy), goo_pass_buf.env_id), float4(g_goo_radiance, 1.0f));
+  }
+#endif
+
   out_color = float4(g_goo_radiance, 1.0f);
 }
