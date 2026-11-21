@@ -30,6 +30,7 @@ SHADER_LIBRARY_CREATE_INFO(draw_view)
 #include "eevee_bxdf_lut_lib.bsl.hh"
 #include "eevee_utility_tx.bsl.hh"
 #include "goo_defines.hh"
+#include "goo_gtao_lib.glsl"
 #include "gpu_shader_codegen_lib.glsl"
 #include "gpu_shader_math_base_lib.glsl"
 #include "gpu_shader_math_safe_lib.glsl"
@@ -58,13 +59,37 @@ float texture_lod_bias_get()
   return 0.0f;
 }
 
-float ambient_occlusion_eval(float3 /*normal*/,
-                             float /*max_distance*/,
-                             const float /*inverted*/,
-                             const float /*sample_count*/)
+float ambient_occlusion_eval(float3 normal,
+                             float max_distance,
+                             const float inverted,
+                             const float sample_count)
 {
-  /* TODO(goo-port): Goo 4.4 GTAO. */
+#ifdef MAT_GEOM_WORLD
   return 1.0f;
+#else
+  float3 vP = drw_point_world_to_view(g_data.P);
+  int steps = clamp(int(sample_count), 2, 16);
+  float4 horizons = goo_gtao_horizon_search(vP,
+                                            gl_FragCoord.xy,
+                                            goo_light_buf.sample_params.yz,
+                                            goo_depth_tx,
+                                            max(max_distance, 1e-4f),
+                                            inverted,
+                                            steps);
+  float vis = 1.0f;
+  float3 unused_bn = float3(0.0f);
+  goo_gtao_integrate(horizons,
+                     gl_FragCoord.xy,
+                     goo_light_buf.sample_params.yz,
+                     drw_world_incident_vector(g_data.P),
+                     safe_normalize(normal),
+                     g_data.Ng,
+                     inverted,
+                     false,
+                     vis,
+                     unused_bn);
+  return saturate(vis);
+#endif
 }
 
 void raycast_eval(float3 /*position*/,
@@ -388,6 +413,9 @@ float goo_hashed_alpha_threshold(float3 co)
                           goo_hash3(floor(pix_scales.y * co)));
 
   float fac = fract(pix_scale_log);
+  if (goo_light_buf.sample_params.x > 0.5f) {
+    alpha_n = fract(alpha_n + goo_light_buf.sample_params.yz);
+  }
   float x = mix(alpha_n.x, alpha_n.y, fac);
 
   float a = min(fac, 1.0f - fac);
@@ -534,6 +562,104 @@ void goo_eval_light_unshadowed(int i, float3 P, float &attenuation, float3 &L)
   }
 }
 
+float goo_contact_shadow(GooLightData ld, float3 P, float shadow_vis)
+{
+#ifdef MAT_GEOM_WORLD
+  return 1.0f;
+#else
+  float contact_dist = ld.contact_shadow.x;
+  if (contact_dist <= 0.0f || shadow_vis <= 0.001f) {
+    return 1.0f;
+  }
+
+  float3 ray_world;
+  int light_type = int(ld.position_type.w + 0.5f);
+  if (light_type == GOO_LIGHT_SUN) {
+    ray_world = safe_normalize(ld.position_type.xyz) * contact_dist;
+  }
+  else {
+    float3 to_light = ld.position_type.xyz - P;
+    float dist_to_light = length(to_light);
+    if (dist_to_light <= 1e-5f) {
+      return 1.0f;
+    }
+    ray_world = (to_light / dist_to_light) * min(contact_dist, dist_to_light);
+  }
+
+  float3 vP = drw_point_world_to_view(P);
+  float3 vNg = safe_normalize(drw_normal_world_to_view(g_data.Ng));
+  float3 vStart = vP + vNg * ld.contact_shadow.y;
+  float3 vEnd = vStart + drw_normal_world_to_view(ray_world);
+
+  float near_z = drw_depth_screen_to_view(0.0f);
+  if (vStart.z > near_z) {
+    return 1.0f;
+  }
+  if (vEnd.z > near_z) {
+    float t_clip = saturate(safe_divide(near_z - vStart.z, vEnd.z - vStart.z));
+    vEnd = mix(vStart, vEnd, t_clip);
+  }
+
+  float jitter = clamp(goo_gtao_noise(gl_FragCoord.xy, goo_light_buf.sample_params.yz).x, 0.15f, 1.0f);
+  float thickness = max(ld.contact_shadow.z, 1e-4f);
+
+  for (int step_idx = 0; step_idx < 16; step_idx++) {
+    float t = (float(step_idx) + jitter) / 16.0f;
+    float3 vSample = mix(vStart, vEnd, t);
+    float3 ss = drw_point_view_to_screen(vSample);
+    if (ss.x < 0.0f || ss.x > 1.0f || ss.y < 0.0f || ss.y > 1.0f || ss.z <= 0.0f || ss.z >= 1.0f) {
+      break;
+    }
+
+    float depth_sample = textureLod(goo_depth_tx, ss.xy, 0.0f).r;
+    if (depth_sample >= 1.0f) {
+      continue;
+    }
+
+    float z_scene = drw_depth_screen_to_view(depth_sample);
+    float depth_delta = z_scene - vSample.z;
+    if (depth_delta > 0.002f && depth_delta < thickness) {
+      return smoothstep(0.85f, 1.0f, t);
+    }
+  }
+  return 1.0f;
+#endif
+}
+
+float goo_scene_diffuse_ao(float3 N, float3 albedo)
+{
+#ifdef MAT_GEOM_WORLD
+  return 1.0f;
+#else
+  int flags = int(goo_light_buf.gtao_params.w + 0.5f);
+  if ((flags & GOO_GTAO_FLAG_ENABLED) == 0 || goo_light_buf.gtao_params.x <= 0.0f) {
+    return 1.0f;
+  }
+
+  int2 max_texel = max(textureSize(goo_horizon_tx, 0) - int2(1), int2(0));
+  int2 texel = clamp(int2(gl_FragCoord.xy), int2(0), max_texel);
+  float4 horizons = goo_gtao_unpack_horizons(texelFetch(goo_horizon_tx, texel, 0));
+
+  float vis = 1.0f;
+  float3 bent_n = N;
+  goo_gtao_integrate(horizons,
+                     gl_FragCoord.xy,
+                     goo_light_buf.sample_params.yz,
+                     drw_world_incident_vector(g_data.P),
+                     safe_normalize(N),
+                     g_data.Ng,
+                     0.0f,
+                     (flags & GOO_GTAO_FLAG_BENT_NORMALS) != 0,
+                     vis,
+                     bent_n);
+
+  if ((flags & GOO_GTAO_FLAG_BOUNCE) != 0) {
+    vis = goo_gtao_multibounce(vis, albedo);
+  }
+  return pow(clamp(vis, 0.0f, 1.0f), max(goo_light_buf.gtao_params.y, 0.0f));
+#endif
+}
+
 void goo_eval_light(int i, float3 P, float3 N, float &attenuation, float3 &L)
 {
   goo_eval_light_unshadowed(i, P, attenuation, L);
@@ -541,14 +667,16 @@ void goo_eval_light(int i, float3 P, float3 N, float &attenuation, float3 &L)
     GooLightData ld = goo_light_buf.lights[i];
     if (goo_light_group_match(ld.light_group_bits, goo_light_group_shadows)) {
       int shadow_id_mode = ((goo_material_flags & GOO_MAT_FLAG_CHECK_SHADOW_ID) != 0) ? 1 : 0;
-      attenuation *= goo_light_shadow(ld, P, N, shadow_id_mode);
+      float vis = goo_light_shadow(ld, P, N, shadow_id_mode);
+      vis *= goo_contact_shadow(ld, P, vis);
+      attenuation *= vis;
     }
   }
 }
 
-float3 goo_diffuse_light(float3 N, float3 P)
+float3 goo_diffuse_light(float3 N, float3 P, float3 albedo)
 {
-  float3 light = goo_light_buf.world_ambient.rgb;
+  float3 light = goo_light_buf.world_ambient.rgb * goo_scene_diffuse_ao(N, albedo);
   for (int i = 0; i < goo_light_buf.light_count; i++) {
     GooLightData ld = goo_light_buf.lights[i];
     if (!goo_light_group_match(ld.light_group_bits, goo_light_groups)) {
@@ -569,7 +697,8 @@ float3 goo_specular_light(float3 N, float3 P, float roughness)
 {
   float3 V = drw_world_incident_vector(P);
   float shininess = mix(512.0f, 2.0f, clamp(roughness, 0.0f, 1.0f));
-  float3 light = goo_light_buf.world_ambient.rgb * (1.0f - roughness) * 0.5f;
+  float ao = goo_scene_diffuse_ao(N, float3(0.5f));
+  float3 light = goo_light_buf.world_ambient.rgb * ao * (1.0f - roughness) * 0.5f;
   for (int i = 0; i < goo_light_buf.light_count; i++) {
     GooLightData ld = goo_light_buf.lights[i];
     if (!goo_light_group_match(ld.light_group_bits, goo_light_groups)) {
@@ -631,6 +760,7 @@ void goo_calc_shader_info(float3 position,
     {
       int cast_mode = ((goo_material_flags & GOO_MAT_FLAG_CHECK_SHADOW_ID) != 0) ? 1 : 0;
       float vis = goo_light_shadow(ld, position, n_n, cast_mode);
+      vis *= goo_contact_shadow(ld, position, vis);
       float light_fac = max(ld.color_energy.r, max(ld.color_energy.g, ld.color_energy.b)) *
                         ld.spot_shadow.w * att_unshadowed;
       shadow_accum += (1.0f - vis) * light_fac;
@@ -740,21 +870,23 @@ void goo_screenspace_curvature(float iiterations,
 
 Closure closure_eval(ClosureDiffuse diffuse)
 {
-  g_goo_radiance += diffuse.color * diffuse.weight * goo_diffuse_light(diffuse.N, g_data.P);
+  g_goo_radiance += diffuse.color * diffuse.weight *
+                    goo_diffuse_light(diffuse.N, g_data.P, diffuse.color);
   return Closure(0);
 }
 
 Closure closure_eval(ClosureSubsurface diffuse)
 {
   /* TODO(goo-port): Goo 4.4 SSS. Approximated as diffuse. */
-  g_goo_radiance += diffuse.color * diffuse.weight * goo_diffuse_light(diffuse.N, g_data.P);
+  g_goo_radiance += diffuse.color * diffuse.weight *
+                    goo_diffuse_light(diffuse.N, g_data.P, diffuse.color);
   return Closure(0);
 }
 
 Closure closure_eval(ClosureTranslucent translucent)
 {
   g_goo_radiance += translucent.color * translucent.weight *
-                    goo_diffuse_light(-translucent.N, g_data.P);
+                    goo_diffuse_light(-translucent.N, g_data.P, translucent.color);
   return Closure(0);
 }
 

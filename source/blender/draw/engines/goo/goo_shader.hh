@@ -34,6 +34,14 @@ class ShaderModule {
   gpu::StaticShader bloom_upsample_hq = {"goo_bloom_upsample_hq"};
   gpu::StaticShader bloom_resolve_hq = {"goo_bloom_resolve_hq"};
 
+  /* GTAO, TAA, and Film Resolve/Overscan. */
+  gpu::StaticShader effect_gtao = {"goo_effect_gtao"};
+  gpu::StaticShader taa_accum = {"goo_taa_accum"};
+  gpu::StaticShader taa_blend = {"goo_taa_blend"};
+  gpu::StaticShader taa_reproject = {"goo_taa_reproject"};
+  gpu::StaticShader film_resolve = {"goo_film_resolve"};
+  gpu::StaticShader film_crop_depth = {"goo_film_crop_depth"};
+
   UtilityTexture utility_tx;
 
   static ShaderModule &get();

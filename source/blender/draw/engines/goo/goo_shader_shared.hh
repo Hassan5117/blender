@@ -31,11 +31,17 @@ struct [[host_shared]] GooLightData {
   float4 extra;
   /** Light group bitmask (128 bits, bit 0 of `.w` is default group 0). */
   int4 light_group_bits;
+  /** x: contact_dist (<=0 disabled); y: contact_bias; z: contact_thickness; w: unused. */
+  float4 contact_shadow;
 };
 
 struct [[host_shared]] GooLightBlock {
   struct GooLightData lights[GOO_MAX_LIGHTS];
   float4 world_ambient;
+  /** x: gtao_distance; y: gtao_factor; z: gtao_quality; w: float(gtao_flags). */
+  float4 gtao_params;
+  /** x: float(sample_index); y: temporal_rand_u; z: temporal_rand_v; w: background_alpha (0 if film_transparent). */
+  float4 sample_params;
   int light_count;
   int shadow_slice_count;
   int _pad0;

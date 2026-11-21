@@ -203,6 +203,33 @@ class DATA_PT_EEVEE_light_shadow(DataButtonsPanel, Panel):
             row.prop(light, "use_absolute_resolution", text="", icon='DRIVER_DISTANCE')
 
 
+class DATA_PT_goo_light_contact_shadow(DataButtonsPanel, Panel):
+    bl_label = "Contact Shadows"
+    bl_parent_id = "DATA_PT_EEVEE_light_shadow"
+    bl_options = {'DEFAULT_CLOSED'}
+    COMPAT_ENGINES = {'GOO_ENGINE'}
+
+    @classmethod
+    def poll(cls, context):
+        light = context.light
+        return (light is not None) and (context.engine in cls.COMPAT_ENGINES)
+
+    def draw_header(self, context):
+        light = context.light
+        self.layout.prop(light, "use_contact_shadow", text="")
+
+    def draw(self, context):
+        layout = self.layout
+        light = context.light
+        layout.use_property_split = True
+        layout.active = context.scene.eevee.use_shadows and light.use_shadow and light.use_contact_shadow
+
+        col = layout.column()
+        col.prop(light, "contact_shadow_distance", text="Distance")
+        col.prop(light, "contact_shadow_bias", text="Bias")
+        col.prop(light, "contact_shadow_thickness", text="Thickness")
+
+
 class DATA_PT_EEVEE_light_influence(DataButtonsPanel, Panel):
     bl_label = "Influence"
     bl_parent_id = "DATA_PT_EEVEE_light"
@@ -308,6 +335,7 @@ classes = (
     DATA_PT_EEVEE_light,
     DATA_PT_spot,
     DATA_PT_EEVEE_light_shadow,
+    DATA_PT_goo_light_contact_shadow,
     DATA_PT_EEVEE_light_influence,
     DATA_PT_EEVEE_light_distance,
     DATA_PT_light_animation,

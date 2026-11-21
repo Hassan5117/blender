@@ -42,25 +42,27 @@ void main()
 
   nodetree_surface(0.5f);
 
-  float alpha = saturate(1.0f - reduce_add(g_goo_transmittance) * (1.0f / 3.0f));
+  float holdout = saturate(g_goo_holdout);
+  float alpha = saturate(1.0f - reduce_add(g_goo_transmittance) * (1.0f / 3.0f)) * (1.0f - holdout);
+  float3 final_radiance = g_goo_radiance * (1.0f - holdout);
 
   if ((goo_material_flags & GOO_MAT_FLAG_ALPHA_CLIP) != 0) {
     if (alpha <= goo_alpha_threshold) {
       discard;
     }
-    out_color = float4(g_goo_radiance / max(alpha, 1e-4f), 1.0f);
+    out_color = float4(final_radiance / max(alpha, 1e-4f), 1.0f);
   }
   else if ((goo_material_flags & GOO_MAT_FLAG_ALPHA_HASHED) != 0) {
     if (alpha < goo_hashed_alpha_threshold(g_data.P)) {
       discard;
     }
-    out_color = float4(g_goo_radiance / max(alpha, 1e-4f), 1.0f);
+    out_color = float4(final_radiance / max(alpha, 1e-4f), 1.0f);
   }
   else if ((goo_material_flags & GOO_MAT_FLAG_ALPHA_BLEND) != 0) {
-    out_color = float4(g_goo_radiance, alpha);
+    out_color = float4(final_radiance, alpha);
   }
   else {
-    out_color = float4(g_goo_radiance, 1.0f);
+    out_color = float4(final_radiance, 1.0f - holdout);
   }
 
 #ifdef GOO_USE_SET_DEPTH

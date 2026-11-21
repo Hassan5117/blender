@@ -2616,8 +2616,9 @@ enum eSceneEEVEE_Flag : int {
   SCE_EEVEE_VOLUMETRIC_SHADOWS = (1 << 2),
   //  SCE_EEVEE_VOLUMETRIC_COLORED    = (1 << 3), /* Unused */
   SCE_EEVEE_GTAO_ENABLED = (1 << 4),
-  // SCE_EEVEE_GTAO_BENT_NORMALS = (1 << 5), /* Unused. */
-  // SCE_EEVEE_GTAO_BOUNCE = (1 << 6), /* Unused. */
+  /* Goo Engine: restored (same bits as Goo 4.x / EEVEE Legacy, for file compatibility). */
+  SCE_EEVEE_GTAO_BENT_NORMALS = (1 << 5),
+  SCE_EEVEE_GTAO_BOUNCE = (1 << 6),
   // SCE_EEVEE_DOF_ENABLED = (1 << 7), /* Moved to camera->dof.flag */
   /* Goo Engine: restored (same bit as Goo 4.x / EEVEE Legacy, for file compatibility). */
   SCE_EEVEE_BLOOM_ENABLED = (1 << 8),
@@ -2652,7 +2653,8 @@ enum FastGI_Method : char {
 struct SceneEEVEE {
   DNA_DEFINE_CXX_METHODS(SceneEEVEE)
 
-  eSceneEEVEE_Flag flag = SCE_EEVEE_TAA_REPROJECTION | SCE_EEVEE_SHADOW_ENABLED;
+  eSceneEEVEE_Flag flag = SCE_EEVEE_TAA_REPROJECTION | SCE_EEVEE_SHADOW_ENABLED |
+                          SCE_EEVEE_GTAO_BENT_NORMALS | SCE_EEVEE_GTAO_BOUNCE;
   int gi_diffuse_bounces = 3;
   int gi_cubemap_resolution = 512;
   int gi_visibility_resolution = 32;
@@ -2672,7 +2674,7 @@ struct SceneEEVEE {
   int volumetric_shadow_samples = 16;
   int volumetric_ray_depth = 16;
 
-  DNA_DEPRECATED float gtao_distance = 0;
+  float gtao_distance = 0.2f;
   DNA_DEPRECATED float gtao_thickness = 0;
 
   float fast_gi_bias = 0.05f;
@@ -2727,6 +2729,10 @@ struct SceneEEVEE {
   float bloom_intensity = 0.05f;
   float bloom_radius = 6.5f;
   float bloom_clamp = 0.0f;
+
+  /* Goo Engine: GTAO settings (names match Goo 4.x / EEVEE Legacy for file compatibility). */
+  float gtao_factor = 1.0f;
+  float goo_gtao_quality = 0.25f;
 };
 
 struct SceneGpencil {

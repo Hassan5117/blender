@@ -60,6 +60,26 @@ void LightModule::begin_sync(const Scene *scene, float4 world_ambient)
   light_buf_.light_count = 0;
   light_buf_.shadow_slice_count = 0;
   light_buf_.world_ambient = world_ambient;
+  int gtao_flags = 0;
+  if (scene != nullptr) {
+    if ((scene->eevee.flag & SCE_EEVEE_GTAO_ENABLED) != 0) {
+      gtao_flags |= GOO_GTAO_FLAG_ENABLED;
+    }
+    if ((scene->eevee.flag & SCE_EEVEE_GTAO_BENT_NORMALS) != 0) {
+      gtao_flags |= GOO_GTAO_FLAG_BENT_NORMALS;
+    }
+    if ((scene->eevee.flag & SCE_EEVEE_GTAO_BOUNCE) != 0) {
+      gtao_flags |= GOO_GTAO_FLAG_BOUNCE;
+    }
+  }
+  light_buf_.gtao_params = float4(
+      ((gtao_flags & GOO_GTAO_FLAG_ENABLED) != 0 && scene != nullptr) ?
+          std::max(scene->eevee.gtao_distance, 0.0f) :
+          0.0f,
+      scene ? std::max(scene->eevee.gtao_factor, 0.0f) : 1.0f,
+      scene ? std::clamp(scene->eevee.goo_gtao_quality, 0.0f, 1.0f) : 0.25f,
+      float(gtao_flags));
+  light_buf_.sample_params = float4(0.0f, 0.0f, 0.0f, 1.0f);
   render_slices_.clear();
   shadow_mat_subs_.clear();
 
@@ -115,6 +135,12 @@ void LightModule::begin_sync(const Scene *scene, float4 world_ambient)
   {
     dummy_color_tx_.clear(float4(0.0f));
   }
+  if (dummy_horizon_tx_.ensure_2d(gpu::TextureFormat::UNORM_8_8_8_8,
+                                  int2(1),
+                                  GPU_TEXTURE_USAGE_SHADER_READ | GPU_TEXTURE_USAGE_ATTACHMENT))
+  {
+    dummy_horizon_tx_.clear(float4(0.0f));
+  }
 
   shadow_ps_.init();
   shadow_ps_.state_set(DRW_STATE_WRITE_COLOR | DRW_STATE_WRITE_DEPTH | DRW_STATE_DEPTH_LESS_EQUAL);
@@ -153,6 +179,7 @@ PassMain::Sub &LightModule::shadow_mat_sub_get(Manager &manager,
         GOO_SHADOW_ID_TEX_SLOT, dummy_shadow_id_tx_, GPUSamplerState::default_sampler());
     sub.bind_texture(GOO_DEPTH_TEX_SLOT, dummy_depth_tx_, GPUSamplerState::default_sampler());
     sub.bind_texture(GOO_SCENE_COLOR_TEX_SLOT, dummy_color_tx_, GPUSamplerState::default_sampler());
+    sub.bind_texture(GOO_HORIZON_TEX_SLOT, dummy_horizon_tx_, GPUSamplerState::default_sampler());
 
     const int4 light_groups = ma ? int4(ma->light_group_bits[0],
                                         ma->light_group_bits[1],
@@ -233,6 +260,12 @@ void LightModule::light_sync(Object *ob, const View &camera_view)
   const float3 pos = obmat.location();
   const float3 fwd = -math::normalize(float3(obmat.z_axis()));
   const bool cast_shadow = use_shadows_ && ((la.mode & LA_SHADOW) != 0);
+  if (cast_shadow && (la.mode & LA_SHAD_CONTACT) != 0 && la.contact_dist > 0.0f) {
+    dst.contact_shadow = float4(la.contact_dist,
+                                std::max(la.contact_bias, 1e-4f),
+                                std::max(la.contact_thickness, 1e-4f),
+                                0.0f);
+  }
 
   switch (la.type) {
     case LA_SUN: {
@@ -374,6 +407,13 @@ void LightModule::end_sync()
 {
   light_buf_.push_update();
   shadow_buf_.push_update();
+}
+
+void LightModule::set_sample_params(int sample_index, float2 sample_rand, bool film_transparent)
+{
+  light_buf_.sample_params = float4(
+      float(sample_index), sample_rand.x, sample_rand.y, film_transparent ? 0.0f : 1.0f);
+  light_buf_.push_update();
 }
 
 void LightModule::render_shadows(Manager &manager)

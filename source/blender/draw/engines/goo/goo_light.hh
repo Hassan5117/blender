@@ -49,6 +49,7 @@ class LightModule {
   Texture dummy_shadow_id_tx_ = {"goo.dummy_shadow_id"};
   Texture dummy_depth_tx_ = {"goo.light_dummy_depth"};
   Texture dummy_color_tx_ = {"goo.light_dummy_color"};
+  Texture dummy_horizon_tx_ = {"goo.light_dummy_horizon"};
 
   Framebuffer shadow_fb_ = {"goo.shadow_fb"};
   View shadow_view_ = {"goo.shadow_view"};
@@ -80,6 +81,9 @@ class LightModule {
   /** Render all shadow slices into `shadow_tx_` and `shadow_id_tx_`. */
   void render_shadows(Manager &manager);
 
+  /** Update per-sample TAA & film parameters inside the lighting UBO before rendering a sample. */
+  void set_sample_params(int sample_index, float2 sample_rand, bool film_transparent);
+
   gpu::UniformBuf *light_buf()
   {
     return light_buf_;
@@ -99,6 +103,15 @@ class LightModule {
   bool shadows_enabled() const
   {
     return use_shadows_;
+  }
+  bool gtao_enabled() const
+  {
+    return (int(light_buf_.gtao_params.w + 0.5f) & GOO_GTAO_FLAG_ENABLED) != 0 &&
+           light_buf_.gtao_params.x > 0.0f;
+  }
+  float4 gtao_params() const
+  {
+    return light_buf_.gtao_params;
   }
 };
 

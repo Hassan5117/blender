@@ -19,6 +19,7 @@
 #include "goo_bloom.hh"
 #include "goo_light.hh"
 #include "goo_material.hh"
+#include "goo_sampling.hh"
 
 namespace blender::goo {
 
@@ -67,18 +68,68 @@ class Instance : public DrawEngine {
   /** Scene lights + shadow atlas. */
   LightModule lights;
   bool is_image_render_ = false;
+  bool is_viewport_image_render_ = false;
 
-  /** Offscreen buffers for depth prepass, screenspace info copy, and post effects. */
-  TextureFromPool color_tx_ = {"goo.color"};
+  /** Sampling / TAA / Film / Overscan state. */
+  Sampling sampling_;
+  View sample_view_ = {"goo.sample_view"};
+  int2 output_extent_ = int2(1);
+  int2 render_extent_ = int2(1);
+  int overscan_px_ = 0;
+  bool film_transparent_ = false;
+
+  /** Offscreen buffers for depth prepass, GTAO, screenspace info copy, TAA, and post effects. */
   TextureFromPool prepass_depth_tx_ = {"goo.prepass_depth"};
+  TextureFromPool gtao_horizon_tx_ = {"goo.gtao_horizon"};
   TextureFromPool scene_color_tx_ = {"goo.scene_color"};
+  TextureFromPool sample_color_tx_ = {"goo.sample_color"};
+  TextureFromPool sample_depth_tx_ = {"goo.sample_depth"};
+  TextureFromPool taa_accum_tx_ = {"goo.taa_accum"};
+  TextureFromPool bloom_out_tx_ = {"goo.bloom_out"};
   Texture dummy_depth_tx_ = {"goo.dummy_depth"};
   Texture dummy_color_tx_ = {"goo.dummy_color"};
+  Texture dummy_horizon_tx_ = {"goo.dummy_horizon"};
   gpu::Texture *prepass_depth_ptr_ = nullptr;
   gpu::Texture *scene_color_ptr_ = nullptr;
+  gpu::Texture *gtao_horizon_ptr_ = nullptr;
+
+  /** Persistent viewport TAA history ping-pong buffers & camera tracking. */
+  Texture taa_history_tx_[2] = {{"goo.taa_hist_0"}, {"goo.taa_hist_1"}};
+  int taa_history_idx_ = 0;
+  int taa_sample_index_ = 0;
+  bool taa_history_valid_ = false;
+  uint64_t depsgraph_last_update_ = 0;
+  int prev_queued_count_ = 0;
+  float4x4 prev_viewmat_ = float4x4::identity();
+  float4x4 prev_winmat_ = float4x4::identity();
+  float4x4 prev_persmat_ = float4x4::identity();
+  int2 prev_render_extent_ = int2(0);
+  bool prev_film_transparent_ = false;
+  float4 prev_gtao_params_ = float4(0.0f);
+
   Framebuffer prepass_fb_ = {"goo.prepass_fb"};
+  Framebuffer gtao_fb_ = {"goo.gtao_fb"};
   Framebuffer main_fb_ = {"goo.main"};
+  Framebuffer taa_accum_fb_ = {"goo.taa_accum_fb"};
+  Framebuffer bloom_out_fb_ = {"goo.bloom_out_fb"};
   Framebuffer output_fb_ = {"goo.output"};
+  Framebuffer output_depth_fb_ = {"goo.output_depth_fb"};
+
+  PassSimple gtao_ps_ = {"Goo.GTAO"};
+  PassSimple taa_accum_ps_ = {"Goo.TaaAccum"};
+  PassSimple taa_blend_ps_ = {"Goo.TaaBlend"};
+  PassSimple taa_reproject_ps_ = {"Goo.TaaReproject"};
+  PassSimple film_resolve_ps_ = {"Goo.FilmResolve"};
+  PassSimple film_crop_depth_ps_ = {"Goo.FilmCropDepth"};
+
+  gpu::Texture *unf_sample_tx_ = nullptr;
+  gpu::Texture *unf_history_tx_ = nullptr;
+  gpu::Texture *unf_resolve_tx_ = nullptr;
+  gpu::Texture *unf_depth_tx_ = nullptr;
+  float unf_sample_weight_ = 1.0f;
+  float unf_blend_alpha_ = 1.0f;
+  float4x4 unf_prev_persmat_ = float4x4::identity();
+  int2 unf_overscan_offset_ = int2(0);
 
   Bloom bloom;
 
@@ -97,6 +148,14 @@ class Instance : public DrawEngine {
   void draw_to(Manager &manager, View &view, gpu::Texture *color, gpu::Texture *depth);
 
  private:
+  void compute_extents(const Scene *scene, int2 output_extent);
+  float4x4 overscan_winmat(const float4x4 &base_winmat) const;
+  void render_single_sample(Manager &manager,
+                            View &sample_view,
+                            gpu::Texture *dst_color,
+                            gpu::Texture *dst_depth,
+                            int sample_index,
+                            bool gtao_active);
   PassMain::Sub &material_sub_get(const Material *ma);
   PassMain::Sub &gpumat_sub_get(Manager &manager, GPUMaterial *gpumat, const Material *ma);
   PassMain::Sub &refract_sub_get(Manager &manager, GPUMaterial *gpumat, const Material *ma);

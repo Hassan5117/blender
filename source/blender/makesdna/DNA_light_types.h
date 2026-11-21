@@ -68,7 +68,7 @@ enum eLight_Mode : int {
   // LA_SHAD_TEX = 1 << 16, /* Deprecated. */
   LA_SHOW_CONE = 1 << 17,
   // LA_SHOW_SHADOW_BOX = 1 << 18,
-  // LA_SHAD_CONTACT = 1 << 19, /* Deprecated. */
+  LA_SHAD_CONTACT = 1 << 19, /* Goo Engine: Contact Shadows. */
   LA_CUSTOM_ATTENUATION = 1 << 20,
   LA_USE_SOFT_FALLOFF = 1 << 21,
   /** Use absolute resolution clamping instead of relative. */
@@ -173,7 +173,11 @@ struct Light {
 
   /* Deprecated. */
   DNA_DEPRECATED float energy_deprecated = 10.0f;
-  float _pad2 = 0.0f;
+
+  /* Goo Engine: Contact Shadows (names match Goo 4.x / EEVEE Legacy). */
+  float contact_dist = 0.2f;
+  float contact_bias = 0.03f;
+  float contact_thickness = 0.2f;
 };
 
 }  // namespace blender

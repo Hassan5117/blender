@@ -679,7 +679,7 @@ class RENDER_PT_eevee_sampling_shadows(RenderButtonsPanel, Panel):
 
 class RENDER_PT_eevee_sampling(RenderButtonsPanel, Panel):
     bl_label = "Sampling"
-    COMPAT_ENGINES = {'BLENDER_EEVEE'}
+    COMPAT_ENGINES = {'BLENDER_EEVEE', 'GOO_ENGINE'}
 
     @classmethod
     def poll(cls, context):
@@ -692,7 +692,7 @@ class RENDER_PT_eevee_sampling(RenderButtonsPanel, Panel):
 class RENDER_PT_eevee_sampling_viewport(RenderButtonsPanel, Panel):
     bl_label = "Viewport"
     bl_parent_id = "RENDER_PT_eevee_sampling"
-    COMPAT_ENGINES = {'BLENDER_EEVEE'}
+    COMPAT_ENGINES = {'BLENDER_EEVEE', 'GOO_ENGINE'}
 
     @classmethod
     def poll(cls, context):
@@ -709,7 +709,8 @@ class RENDER_PT_eevee_sampling_viewport(RenderButtonsPanel, Panel):
         col = layout.column()
         col.prop(props, "taa_samples", text="Samples")
         col.prop(props, "use_taa_reprojection", text="Temporal Reprojection")
-        col.prop(props, "use_shadow_jitter_viewport", text="Jittered Shadows")
+        if context.engine == 'BLENDER_EEVEE':
+            col.prop(props, "use_shadow_jitter_viewport", text="Jittered Shadows")
 
         # Add SSS sample count here.
 
@@ -717,7 +718,7 @@ class RENDER_PT_eevee_sampling_viewport(RenderButtonsPanel, Panel):
 class RENDER_PT_eevee_sampling_render(RenderButtonsPanel, Panel):
     bl_label = "Render"
     bl_parent_id = "RENDER_PT_eevee_sampling"
-    COMPAT_ENGINES = {'BLENDER_EEVEE'}
+    COMPAT_ENGINES = {'BLENDER_EEVEE', 'GOO_ENGINE'}
 
     @classmethod
     def poll(cls, context):
@@ -762,7 +763,7 @@ class RENDER_PT_eevee_sampling_advanced(RenderButtonsPanel, Panel):
 class RENDER_PT_eevee_film(RenderButtonsPanel, Panel):
     bl_label = "Film"
     bl_options = {'DEFAULT_CLOSED'}
-    COMPAT_ENGINES = {'BLENDER_EEVEE'}
+    COMPAT_ENGINES = {'BLENDER_EEVEE', 'GOO_ENGINE'}
 
     @classmethod
     def poll(cls, context):
@@ -1250,10 +1251,41 @@ class RENDER_PT_goo_shadows(RenderButtonsPanel, Panel):
         col.prop(props, "shadow_resolution_scale", text="Resolution Scale")
 
 
+class RENDER_PT_goo_ambient_occlusion(RenderButtonsPanel, Panel):
+    bl_label = "Ambient Occlusion"
+    bl_options = {'DEFAULT_CLOSED'}
+    COMPAT_ENGINES = {'GOO_ENGINE'}
+
+    @classmethod
+    def poll(cls, context):
+        return (context.engine in cls.COMPAT_ENGINES)
+
+    def draw_header(self, context):
+        scene = context.scene
+        props = scene.eevee
+        self.layout.prop(props, "use_gtao", text="")
+
+    def draw(self, context):
+        layout = self.layout
+        layout.use_property_split = True
+
+        scene = context.scene
+        props = scene.eevee
+
+        layout.active = props.use_gtao
+        col = layout.column()
+        col.prop(props, "gtao_distance")
+        col.prop(props, "gtao_factor")
+        col.prop(props, "gtao_quality")
+        col.prop(props, "use_gtao_bent_normals")
+        col.prop(props, "use_gtao_bounce")
+
+
 classes = (
     RENDER_PT_context,
     RENDER_PT_goo_bloom,
     RENDER_PT_goo_shadows,
+    RENDER_PT_goo_ambient_occlusion,
     RENDER_PT_eevee_sampling,
     RENDER_PT_eevee_sampling_viewport,
     RENDER_PT_eevee_sampling_render,

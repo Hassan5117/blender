@@ -14,11 +14,17 @@
 #define GOO_LIGHT_UBO_SLOT 3
 #define GOO_SHADOW_UBO_SLOT 4
 
-/* Pass-level sampler slots (2 = UtilityTexture, 3 = shadow atlas, 4 = prepass depth, 5 = color, 6 = shadow id). */
+/* Pass-level sampler slots (2 = UtilityTexture, 3 = shadow atlas, 4 = prepass depth, 5 = color, 6 = shadow id, 7 = GTAO horizon). */
 #define GOO_SHADOW_TEX_SLOT 3
 #define GOO_DEPTH_TEX_SLOT 4
 #define GOO_SCENE_COLOR_TEX_SLOT 5
 #define GOO_SHADOW_ID_TEX_SLOT 6
+#define GOO_HORIZON_TEX_SLOT 7
+
+/* Scene GTAO flags packed into `gtao_params.w`. */
+#define GOO_GTAO_FLAG_ENABLED (1 << 0)
+#define GOO_GTAO_FLAG_BENT_NORMALS (1 << 1)
+#define GOO_GTAO_FLAG_BOUNCE (1 << 2)
 
 /* Per-material pipeline flags pushed to shaders via `goo_material_flags`. */
 #define GOO_MAT_FLAG_ALPHA_CLIP (1 << 0)

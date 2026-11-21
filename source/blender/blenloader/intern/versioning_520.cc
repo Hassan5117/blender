@@ -933,6 +933,28 @@ void blo_do_versions_520(FileData *fd, Library * /*lib*/, Main *bmain)
     }
   }
 
+  if (!DNA_struct_member_exists_with_alias(fd->filesdna, "SceneEEVEE", "float", "gtao_factor")) {
+    for (Scene &scene : bmain->scenes) {
+      if (scene.eevee.gtao_distance <= 0.0f) {
+        scene.eevee.gtao_distance = 0.2f;
+      }
+      scene.eevee.gtao_factor = 1.0f;
+      scene.eevee.goo_gtao_quality = (scene.eevee.fast_gi_quality > 0.0f) ?
+                                         scene.eevee.fast_gi_quality :
+                                         0.25f;
+      scene.eevee.flag |= SCE_EEVEE_GTAO_BENT_NORMALS | SCE_EEVEE_GTAO_BOUNCE;
+      scene.eevee.flag &= ~SCE_EEVEE_GTAO_ENABLED;
+    }
+  }
+  if (!DNA_struct_member_exists_with_alias(fd->filesdna, "Light", "float", "contact_dist")) {
+    for (Light &light : bmain->lights) {
+      light.contact_dist = 0.2f;
+      light.contact_bias = 0.03f;
+      light.contact_thickness = 0.2f;
+      light.mode &= ~LA_SHAD_CONTACT;
+    }
+  }
+
   /* Goo Engine: light groups (bit 0 of word 3 is default group 0). */
   if (!DNA_struct_member_exists_with_alias(fd->filesdna, "Light", "int", "light_group_bits[4]")) {
     for (Light &la : bmain->lights) {
