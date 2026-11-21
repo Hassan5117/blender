@@ -238,7 +238,8 @@ static void colorband_buttons_layout(Layout &layout,
                                      ColorBand *coba,
                                      const rctf *butr,
                                      const RNAUpdateCb &cb,
-                                     int expand)
+                                     int expand,
+                                     bool is_oklab = false)
 {
   Button *bt;
   const float unit = BLI_rctf_size_x(butr) / 14.0f;
@@ -308,22 +309,25 @@ static void colorband_buttons_layout(Layout &layout,
   block_align_end(block);
   block_emboss_set(block, EmbossType::Emboss);
 
-  row = &split->row(false);
+  if (!is_oklab) {
+    row = &split->row(false);
 
-  block_align_begin(block);
-  row->prop(&ptr, "color_mode", UI_ITEM_NONE, "", ICON_NONE);
-  if (ELEM(coba->color_mode, COLBAND_BLEND_HSV, COLBAND_BLEND_HSL)) {
-    row->prop(&ptr, "hue_interpolation", UI_ITEM_NONE, "", ICON_NONE);
+    block_align_begin(block);
+    row->prop(&ptr, "color_mode", UI_ITEM_NONE, "", ICON_NONE);
+    if (ELEM(coba->color_mode, COLBAND_BLEND_HSV, COLBAND_BLEND_HSL)) {
+      row->prop(&ptr, "hue_interpolation", UI_ITEM_NONE, "", ICON_NONE);
+    }
+    else { /* COLBAND_BLEND_RGB */
+      row->prop(&ptr, "interpolation", UI_ITEM_NONE, "", ICON_NONE);
+    }
+    block_align_end(block);
   }
-  else { /* COLBAND_BLEND_RGB */
-    row->prop(&ptr, "interpolation", UI_ITEM_NONE, "", ICON_NONE);
-  }
-  block_align_end(block);
 
   row = &layout.row(false);
 
   bt = uiDefBut(
       block, ButtonType::ColorBand, "", xs, ys, BLI_rctf_size_x(butr), UI_UNIT_Y, coba, 0, 0, "");
+  static_cast<ButtonColorBand *>(bt)->is_oklab = is_oklab;
   bt->rnapoin = cb.ptr;
   bt->rnaprop = cb.prop;
   button_func_set(bt, [cb](bContext &C) { rna_update_cb(C, cb); });
@@ -404,10 +408,8 @@ static void colorband_buttons_layout(Layout &layout,
   }
 }
 
-void template_color_ramp(Layout *layout,
-                         PointerRNA *ptr,
-                         const StringRefNull propname,
-                         bool expand)
+static void template_color_ramp_impl(
+    Layout *layout, PointerRNA *ptr, const StringRefNull propname, bool expand, bool is_oklab)
 {
   PropertyRNA *prop = RNA_struct_find_property(ptr, propname.c_str());
 
@@ -431,10 +433,31 @@ void template_color_ramp(Layout *layout,
   ID *id = cptr.owner_id;
   block_lock_set(block, (id && !ID_IS_EDITABLE(id)), ERROR_LIBDATA_MESSAGE);
 
-  colorband_buttons_layout(
-      *layout, block, static_cast<ColorBand *>(cptr.data), &rect, RNAUpdateCb{*ptr, prop}, expand);
+  colorband_buttons_layout(*layout,
+                           block,
+                           static_cast<ColorBand *>(cptr.data),
+                           &rect,
+                           RNAUpdateCb{*ptr, prop},
+                           expand,
+                           is_oklab);
 
   block_lock_clear(block);
+}
+
+void template_color_ramp(Layout *layout,
+                         PointerRNA *ptr,
+                         const StringRefNull propname,
+                         bool expand)
+{
+  template_color_ramp_impl(layout, ptr, propname, expand, false);
+}
+
+void template_oklab_color_ramp(Layout *layout,
+                               PointerRNA *ptr,
+                               const StringRefNull propname,
+                               bool expand)
+{
+  template_color_ramp_impl(layout, ptr, propname, expand, true);
 }
 
 }  // namespace blender::ui

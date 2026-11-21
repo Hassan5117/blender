@@ -69,6 +69,7 @@ set(SRC
   nodes/node_shader_normal.cc
   nodes/node_shader_normal_map.cc
   nodes/node_shader_object_info.cc
+  nodes/node_shader_oklab_color_ramp.cc
   nodes/node_shader_output_aov.cc
   nodes/node_shader_output_light.cc
   nodes/node_shader_output_linestyle.cc
@@ -82,6 +83,10 @@ set(SRC
   nodes/node_shader_rgb_to_bw.cc
   nodes/node_shader_screenspace_info.cc
   nodes/node_shader_script.cc
+  nodes/node_shader_sdf_noise.cc
+  nodes/node_shader_sdf_op.cc
+  nodes/node_shader_sdf_primitive.cc
+  nodes/node_shader_sdf_vector_op.cc
   nodes/node_shader_sepcomb_color.cc
   nodes/node_shader_sepcomb_xyz.cc
   nodes/node_shader_set_depth.cc
@@ -96,6 +101,7 @@ set(SRC
   nodes/node_shader_tex_environment.cc
   nodes/node_shader_tex_gabor.cc
   nodes/node_shader_tex_gradient.cc
+  nodes/node_shader_tex_hexagon.cc
   nodes/node_shader_tex_image.cc
   nodes/node_shader_tex_magic.cc
   nodes/node_shader_tex_noise.cc
@@ -103,6 +109,7 @@ set(SRC
   nodes/node_shader_tex_voronoi.cc
   nodes/node_shader_tex_wave.cc
   nodes/node_shader_tex_white_noise.cc
+  nodes/node_shader_twirl.cc
   nodes/node_shader_uv_along_stroke.cc
   nodes/node_shader_uvmap.cc
   nodes/node_shader_value.cc
@@ -116,6 +123,7 @@ set(SRC
   nodes/node_shader_volume_info.cc
   nodes/node_shader_volume_principled.cc
   nodes/node_shader_volume_scatter.cc
+  nodes/node_shader_water_ripples.cc
   nodes/node_shader_wavelength.cc
   nodes/node_shader_wireframe.cc
 

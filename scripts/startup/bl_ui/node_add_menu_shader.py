@@ -392,6 +392,7 @@ class NODE_MT_shader_node_color_base(node_add_menu.NodeMenu):
         self.node_operator(layout, "ShaderNodeBlackbody")
         self.node_operator(layout, "ShaderNodeBrightContrast")
         self.node_operator(layout, "ShaderNodeValToRGB")
+        self.node_operator(layout, "ShaderNodeOKLabColorRamp")
         self.node_operator(layout, "ShaderNodeGamma")
         self.node_operator(layout, "ShaderNodeHueSaturation")
         self.node_operator(layout, "ShaderNodeInvert")
@@ -420,6 +421,7 @@ class NODE_MT_shader_node_texture_base(node_add_menu.NodeMenu):
         self.node_operator(layout, "ShaderNodeTexEnvironment")
         self.node_operator(layout, "ShaderNodeTexGabor")
         self.node_operator(layout, "ShaderNodeTexGradient")
+        self.node_operator(layout, "ShaderNodeTexHexagon")
         self.node_operator(layout, "ShaderNodeTexIES")
         self.node_operator(layout, "ShaderNodeTexImage")
         self.node_operator(layout, "ShaderNodeTexMagic")
@@ -573,6 +575,15 @@ class NODE_MT_shader_node_goo_engine_base(node_add_menu.NodeMenu):
             "ShaderNodeSetDepth",
             poll=is_material,
         )
+        layout.separator()
+        self.node_operator(layout, "ShaderNodeOKLabColorRamp")
+        self.node_operator(layout, "ShaderNodeTexHexagon")
+        self.node_operator(layout, "ShaderNodeSdfPrimitive")
+        self.node_operator(layout, "ShaderNodeSdfOp")
+        self.node_operator(layout, "ShaderNodeSdfVectorOp")
+        self.node_operator(layout, "ShaderNodeSdfNoise")
+        self.node_operator(layout, "ShaderNodeTwirl")
+        self.node_operator(layout, "ShaderNodeWaterRipples")
 
 
 class NODE_MT_shader_node_all_base(node_add_menu.NodeMenu):

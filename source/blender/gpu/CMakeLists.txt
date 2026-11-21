@@ -680,6 +680,7 @@ set(GLSL_SRC
   shaders/material/gpu_shader_material_normal.glsl
   shaders/material/gpu_shader_material_normal_map.glsl
   shaders/material/gpu_shader_material_object_info.glsl
+  shaders/material/gpu_shader_material_oklab_colorramp.glsl
   shaders/material/gpu_shader_material_output_aov.glsl
   shaders/material/gpu_shader_material_output_material.glsl
   shaders/material/gpu_shader_material_output_world.glsl
@@ -701,6 +702,11 @@ set(GLSL_SRC
   shaders/material/gpu_shader_material_rotation_to_quaternion.glsl
   shaders/material/gpu_shader_material_scene_time.glsl
   shaders/material/gpu_shader_material_screenspace_info.glsl
+  shaders/material/gpu_shader_material_sdf_noise.glsl
+  shaders/material/gpu_shader_material_sdf_op.glsl
+  shaders/material/gpu_shader_material_sdf_primitive.glsl
+  shaders/material/gpu_shader_material_sdf_util.glsl
+  shaders/material/gpu_shader_material_sdf_vector_op.glsl
   shaders/material/gpu_shader_material_separate_color.glsl
   shaders/material/gpu_shader_material_separate_xyz.glsl
   shaders/material/gpu_shader_material_set.glsl
@@ -716,6 +722,7 @@ set(GLSL_SRC
   shaders/material/gpu_shader_material_tex_environment.glsl
   shaders/material/gpu_shader_material_tex_gabor.glsl
   shaders/material/gpu_shader_material_tex_gradient.glsl
+  shaders/material/gpu_shader_material_tex_hexagon.glsl
   shaders/material/gpu_shader_material_tex_image.glsl
   shaders/material/gpu_shader_material_tex_magic.glsl
   shaders/material/gpu_shader_material_tex_noise.glsl
@@ -728,6 +735,7 @@ set(GLSL_SRC
   shaders/material/gpu_shader_material_transform_utils.glsl
   shaders/material/gpu_shader_material_translucent.glsl
   shaders/material/gpu_shader_material_transparent.glsl
+  shaders/material/gpu_shader_material_twirl.glsl
   shaders/material/gpu_shader_material_uv_map.glsl
   shaders/material/gpu_shader_material_vector_displacement.glsl
   shaders/material/gpu_shader_material_vector_math.glsl
@@ -738,6 +746,7 @@ set(GLSL_SRC
   shaders/material/gpu_shader_material_volume_scatter.glsl
   shaders/material/gpu_shader_material_volume_coefficients.glsl
   shaders/material/gpu_shader_material_voronoi.glsl
+  shaders/material/gpu_shader_material_water_ripples.glsl
   shaders/material/gpu_shader_material_wireframe.glsl
   shaders/material/gpu_shader_material_world_normals.glsl
 

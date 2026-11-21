@@ -66,6 +66,7 @@ void register_shader_nodes()
   register_node_type_sh_normal_map();
   register_node_type_sh_normal();
   register_node_type_sh_object_info();
+  register_node_type_sh_oklab_color_ramp();
   register_node_type_sh_output_aov();
   register_node_type_sh_output_light();
   register_node_type_sh_output_linestyle();
@@ -79,6 +80,10 @@ void register_shader_nodes()
   register_node_type_sh_rgbtobw();
   register_node_type_sh_screenspace_info();
   register_node_type_sh_script();
+  register_node_type_sh_sdf_noise();
+  register_node_type_sh_sdf_op();
+  register_node_type_sh_sdf_primitive();
+  register_node_type_sh_sdf_vector_op();
   register_node_type_sh_sepcolor();
   register_node_type_sh_sepxyz();
   register_node_type_sh_set_depth();
@@ -93,6 +98,7 @@ void register_shader_nodes()
   register_node_type_sh_tex_environment();
   register_node_type_sh_tex_gabor();
   register_node_type_sh_tex_gradient();
+  register_node_type_sh_tex_hexagon();
   register_node_type_sh_tex_ies();
   register_node_type_sh_tex_image();
   register_node_type_sh_tex_magic();
@@ -101,6 +107,7 @@ void register_shader_nodes()
   register_node_type_sh_tex_voronoi();
   register_node_type_sh_tex_wave();
   register_node_type_sh_tex_white_noise();
+  register_node_type_sh_twirl();
   register_node_type_sh_uvalongstroke();
   register_node_type_sh_uvmap();
   register_node_type_sh_valtorgb();
@@ -115,6 +122,7 @@ void register_shader_nodes()
   register_node_type_sh_volume_principled();
   register_node_type_sh_volume_scatter();
   register_node_type_sh_volume_coefficients();
+  register_node_type_sh_water_ripples();
   register_node_type_sh_wavelength();
   register_node_type_sh_wireframe();
 }

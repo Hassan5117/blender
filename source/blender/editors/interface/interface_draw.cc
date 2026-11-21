@@ -1452,7 +1452,12 @@ void draw_but_COLORBAND(Button *but, const uiWidgetColors *wcol, const rcti *rec
   immBegin(GPU_PRIM_TRI_STRIP, (sizex + 1) * 2);
   for (int a = 0; a <= sizex; a++) {
     const float pos = float(a) / sizex;
-    BKE_colorband_evaluate(coba, pos, colf);
+    if (but_coba->is_oklab) {
+      BKE_colorband_evaluate_oklab(coba, pos, colf);
+    }
+    else {
+      BKE_colorband_evaluate(coba, pos, colf);
+    }
     if (display) {
       IMB_colormanagement_scene_linear_to_display_v3(colf, display);
     }
@@ -1472,7 +1477,12 @@ void draw_but_COLORBAND(Button *but, const uiWidgetColors *wcol, const rcti *rec
   immBegin(GPU_PRIM_TRI_STRIP, (sizex + 1) * 2);
   for (int a = 0; a <= sizex; a++) {
     const float pos = float(a) / sizex;
-    BKE_colorband_evaluate(coba, pos, colf);
+    if (but_coba->is_oklab) {
+      BKE_colorband_evaluate_oklab(coba, pos, colf);
+    }
+    else {
+      BKE_colorband_evaluate(coba, pos, colf);
+    }
     if (display) {
       IMB_colormanagement_scene_linear_to_display_v3(colf, display);
     }
