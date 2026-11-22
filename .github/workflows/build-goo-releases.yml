@@ -1,0 +1,357 @@
+name: Build & Verify Goo Engine 5.2.4 Releases
+
+on:
+  push:
+    branches:
+      - goo-port
+    tags:
+      - "v*-goo*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: goo-releases-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  ARCHIVE_VERSION: "5.2.4-goo"
+
+jobs:
+  linux-x64:
+    name: Linux x64 (OpenGL + Vulkan + Release)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+
+    steps:
+      - name: Free runner disk space
+        run: |
+          df -h
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h
+
+      - name: Install Linux build & headless GPU QA dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            git-lfs \
+            build-essential \
+            cmake \
+            ninja-build \
+            mold \
+            pkg-config \
+            python3 \
+            libx11-dev \
+            libxxf86vm-dev \
+            libxcursor-dev \
+            libxi-dev \
+            libxrandr-dev \
+            libxinerama-dev \
+            libxfixes-dev \
+            libxrender-dev \
+            libxkbcommon-dev \
+            libwayland-dev \
+            wayland-protocols \
+            libegl-dev \
+            libgl-dev \
+            libgl1-mesa-dri \
+            libjack-jackd2-dev \
+            libpulse-dev \
+            libdbus-1-dev \
+            xvfb \
+            mesa-utils \
+            mesa-vulkan-drivers \
+            vulkan-tools \
+            xz-utils
+
+      - name: Checkout Blender Goo Engine source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          lfs: false
+          submodules: false
+
+      - name: Pull bundled LFS assets and precompiled lib/linux_x64
+        run: |
+          git lfs install --skip-repo
+          git config lfs.url https://projects.blender.org/blender/blender.git/info/lfs
+          git lfs pull --include="release/datafiles/assets/**"
+          rm -rf .git/lfs
+
+          git config --local submodule.lib/linux_x64.update checkout
+          GIT_LFS_SKIP_SMUDGE=1 git submodule update --init --depth 1 --progress lib/linux_x64
+          git -C lib/linux_x64 lfs pull
+          rm -rf lib/linux_x64/.git .git/modules/lib/linux_x64
+          df -h
+
+      - name: Configure Linux Release build
+        run: |
+          cmake -S . -B "$RUNNER_TEMP/build-linux" -G Ninja \
+            -C build_files/cmake/config/blender_release.cmake \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DWITH_LINKER_MOLD=ON \
+            -DWITH_DOC_MANPAGE=OFF \
+            -DWITH_OPENGL_BACKEND=ON \
+            -DWITH_VULKAN_BACKEND=ON \
+            -DWITH_CYCLES_CUDA_BINARIES=OFF \
+            -DWITH_CYCLES_HIP_BINARIES=OFF \
+            -DWITH_CYCLES_ONEAPI_BINARIES=OFF \
+            -DWITH_CYCLES_DEVICE_OPTIX=OFF \
+            -DWITH_CYCLES_DEVICE_HIPRT=OFF \
+            -DWITH_CYCLES_DEVICE_ONEAPI=OFF \
+            -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/pkg/blender-${{ env.ARCHIVE_VERSION }}-linux-x64"
+
+      - name: Build & install Linux Release
+        run: |
+          ninja -C "$RUNNER_TEMP/build-linux" install
+          rm -rf "$RUNNER_TEMP/build-linux"
+          rm -rf lib/linux_x64
+          df -h
+
+      - name: Verify headless OpenGL (Mesa llvmpipe)
+        run: |
+          BLENDER_BIN="$RUNNER_TEMP/pkg/blender-${{ env.ARCHIVE_VERSION }}-linux-x64/blender"
+          VER_OUT="$("$BLENDER_BIN" --version)"
+          echo "$VER_OUT"
+          echo "$VER_OUT" | grep -q "5.2.4 LTS Goo Engine"
+
+          mkdir -p "$RUNNER_TEMP/qa-renders/opengl"
+          LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a -s "-screen 0 1280x720x24" glxinfo -B || true
+          GOO_CI_SOFTWARE_GPU=1 \
+            GOO_TEST_OUT_DIR="$RUNNER_TEMP/qa-renders/opengl" \
+            LIBGL_ALWAYS_SOFTWARE=1 \
+            xvfb-run -a -s "-screen 0 1280x720x24" \
+            "$BLENDER_BIN" --background --factory-startup --gpu-backend opengl \
+            --python-exit-code 1 --python "$GITHUB_WORKSPACE/tests/python/goo_engine_ci_test.py"
+
+      - name: Verify headless Vulkan (Mesa lavapipe)
+        run: |
+          BLENDER_BIN="$RUNNER_TEMP/pkg/blender-${{ env.ARCHIVE_VERSION }}-linux-x64/blender"
+          LVP_ICD="$(ls /usr/share/vulkan/icd.d/lvp_icd*.json | head -n 1)"
+          echo "Using Lavapipe ICD: $LVP_ICD"
+          VK_ICD_FILENAMES="$LVP_ICD" VK_DRIVER_FILES="$LVP_ICD" vulkaninfo --summary || true
+
+          mkdir -p "$RUNNER_TEMP/qa-renders/vulkan"
+          GOO_CI_SOFTWARE_GPU=1 \
+            GOO_TEST_OUT_DIR="$RUNNER_TEMP/qa-renders/vulkan" \
+            VK_ICD_FILENAMES="$LVP_ICD" \
+            VK_DRIVER_FILES="$LVP_ICD" \
+            xvfb-run -a -s "-screen 0 1280x720x24" \
+            "$BLENDER_BIN" --background --factory-startup --gpu-backend vulkan \
+            --python-exit-code 1 --python "$GITHUB_WORKSPACE/tests/python/goo_engine_ci_test.py"
+
+      - name: Package Linux portable .tar.xz archive
+        run: |
+          mkdir -p "$RUNNER_TEMP/dist"
+          PKG_NAME="blender-${{ env.ARCHIVE_VERSION }}-linux-x64"
+          tar -C "$RUNNER_TEMP/pkg" -cf - "$PKG_NAME" | xz -T0 -6 > "$RUNNER_TEMP/dist/$PKG_NAME.tar.xz"
+          (cd "$RUNNER_TEMP/dist" && sha256sum "$PKG_NAME.tar.xz" > "$PKG_NAME.tar.xz.sha256")
+          ls -lh "$RUNNER_TEMP/dist"
+
+      - name: Upload Linux release archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: goo-engine-linux-x64
+          path: |
+            ${{ runner.temp }}/dist/blender-*-linux-x64.tar.xz
+            ${{ runner.temp }}/dist/blender-*-linux-x64.tar.xz.sha256
+          if-no-files-found: error
+
+      - name: Upload Linux OpenGL & Vulkan QA renders
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: goo-engine-linux-qa-renders
+          path: ${{ runner.temp }}/qa-renders
+          if-no-files-found: ignore
+
+  windows-x64:
+    name: Windows x64 (Release + CLI/Migration QA)
+    runs-on: windows-2025
+    timeout-minutes: 180
+
+    steps:
+      - name: Free runner disk space
+        shell: pwsh
+        run: |
+          Get-PSDrive -PSProvider FileSystem
+          Remove-Item -Recurse -Force C:\Android, C:\ghcup, C:\hostedtoolcache\windows\CodeQL, C:\Strawberry -ErrorAction SilentlyContinue
+          Get-PSDrive -PSProvider FileSystem
+
+      - name: Enable Git longpaths
+        shell: pwsh
+        run: |
+          git config --global core.longpaths true
+
+      - name: Checkout Blender Goo Engine source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          lfs: false
+          submodules: false
+
+      - name: Setup MSVC x64 developer environment
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Ensure Ninja & 7-Zip are available
+        shell: pwsh
+        run: |
+          if (-not (Get-Command ninja -ErrorAction SilentlyContinue)) {
+            choco install -y ninja
+          }
+          if (-not (Get-Command 7z -ErrorAction SilentlyContinue) -and (Test-Path "C:\Program Files\7-Zip\7z.exe")) {
+            Add-Content -Path $env:GITHUB_PATH -Value "C:\Program Files\7-Zip"
+          }
+          cmake --version
+          ninja --version
+
+      - name: Pull bundled LFS assets and precompiled lib/windows_x64
+        shell: pwsh
+        run: |
+          git lfs install --skip-repo
+          git config lfs.url https://projects.blender.org/blender/blender.git/info/lfs
+          git lfs pull --include="release/datafiles/assets/**"
+          if (Test-Path .git\lfs) { Remove-Item -Recurse -Force .git\lfs }
+
+          git config --local submodule.lib/windows_x64.update checkout
+          $env:GIT_LFS_SKIP_SMUDGE = "1"
+          git submodule update --init --depth 1 --progress lib/windows_x64
+          Remove-Item Env:GIT_LFS_SKIP_SMUDGE
+          git -C lib/windows_x64 lfs pull
+          Remove-Item -Recurse -Force lib\windows_x64\.git, .git\modules\lib\windows_x64 -ErrorAction SilentlyContinue
+          Get-PSDrive -PSProvider FileSystem
+
+      - name: Configure Windows Release build
+        shell: pwsh
+        run: |
+          $clLine = (cl.exe 2>&1 | Select-Object -First 1) -as [string]
+          Write-Host "Detected cl.exe: $clLine"
+          $extraCompilerArgs = @()
+          if ($clLine -match 'Version\s+(\d+\.\d+\.\d+)') {
+            $clVer = [version]$Matches[1]
+            if ($clVer -lt [version]'19.44.35216') {
+              if (Get-Command clang-cl.exe -ErrorAction SilentlyContinue) {
+                Write-Host "cl.exe $clVer < 19.44.35216; using clang-cl"
+                $extraCompilerArgs += @('-DCMAKE_C_COMPILER=clang-cl', '-DCMAKE_CXX_COMPILER=clang-cl')
+              } else {
+                throw "cl.exe $clVer < 19.44.35216 and clang-cl.exe was not found"
+              }
+            }
+          }
+
+          $buildDir = "$($env:RUNNER_TEMP -replace '\\','/')/build-win"
+          $installDir = "$($env:RUNNER_TEMP -replace '\\','/')/pkg/blender-${{ env.ARCHIVE_VERSION }}-windows-x64"
+
+          & cmake -S . -B $buildDir -G Ninja `
+            @extraCompilerArgs `
+            -C build_files/cmake/config/blender_release.cmake `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DWITH_WINDOWS_RELEASE_PDB=OFF `
+            -DWITH_OPENGL_BACKEND=ON `
+            -DWITH_VULKAN_BACKEND=ON `
+            -DWITH_CYCLES_CUDA_BINARIES=OFF `
+            -DWITH_CYCLES_HIP_BINARIES=OFF `
+            -DWITH_CYCLES_ONEAPI_BINARIES=OFF `
+            -DWITH_CYCLES_DEVICE_OPTIX=OFF `
+            -DWITH_CYCLES_DEVICE_HIPRT=OFF `
+            -DWITH_CYCLES_DEVICE_ONEAPI=OFF `
+            -DCMAKE_INSTALL_PREFIX="$installDir"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build & install Windows Release
+        shell: pwsh
+        run: |
+          $buildDir = "$env:RUNNER_TEMP\build-win"
+          ninja -C $buildDir -j 3 install
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Remove-Item -Recurse -Force $buildDir -ErrorAction SilentlyContinue
+          Remove-Item -Recurse -Force lib\windows_x64 -ErrorAction SilentlyContinue
+          Get-PSDrive -PSProvider FileSystem
+
+      - name: Verify Windows version string & Goo migration suite
+        shell: pwsh
+        run: |
+          $pkgDir = "$env:RUNNER_TEMP\pkg\blender-${{ env.ARCHIVE_VERSION }}-windows-x64"
+          $blenderExe = "$pkgDir\blender.exe"
+          $verOut = & $blenderExe --version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Write-Host $verOut
+          if (-not ($verOut -match "5\.2\.4 LTS Goo Engine")) {
+            throw "Unexpected blender.exe --version output: $verOut"
+          }
+
+          $env:GOO_SKIP_GPU_RENDER = "1"
+          & $blenderExe --background --factory-startup --python-exit-code 1 --python "$env:GITHUB_WORKSPACE\tests\python\goo_engine_ci_test.py"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Package Windows portable .zip archive
+        shell: pwsh
+        run: |
+          $pkgName = "blender-${{ env.ARCHIVE_VERSION }}-windows-x64"
+          $pkgDir = "$env:RUNNER_TEMP\pkg\$pkgName"
+          $distDir = "$env:RUNNER_TEMP\dist"
+          New-Item -ItemType Directory -Force -Path $distDir | Out-Null
+          $zipPath = "$distDir\$pkgName.zip"
+          & 7z a -tzip -mx=5 $zipPath $pkgDir
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $hash = (Get-FileHash -Path $zipPath -Algorithm SHA256).Hash.ToLower()
+          Set-Content -Path "$zipPath.sha256" -Value "$hash  $pkgName.zip"
+          Get-ChildItem $distDir
+
+      - name: Upload Windows release archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: goo-engine-windows-x64
+          path: |
+            ${{ runner.temp }}/dist/blender-*-windows-x64.zip
+            ${{ runner.temp }}/dist/blender-*-windows-x64.zip.sha256
+          if-no-files-found: error
+
+  publish-release:
+    name: Publish GitHub Release
+    needs: [linux-x64, windows-x64]
+    if: success()
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Download Linux release archive
+        uses: actions/download-artifact@v4
+        with:
+          name: goo-engine-linux-x64
+          path: release-assets
+
+      - name: Download Windows release archive
+        uses: actions/download-artifact@v4
+        with:
+          name: goo-engine-windows-x64
+          path: release-assets
+
+      - name: List release assets
+        run: ls -lh release-assets
+
+      - name: Create or update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v5.2.4-goo
+          target_commitish: ${{ github.sha }}
+          name: "Blender 5.2.4 LTS — Goo Engine (Windows x64 & Linux x64)"
+          prerelease: false
+          draft: false
+          body: |
+            Portable release builds of **Blender 5.2.4 LTS Goo Engine** (`goo-port` branch).
+
+            ### Downloads
+            - **Windows x64 (`blender-5.2.4-goo-windows-x64.zip`)**: Extract anywhere and run `blender.exe` (or `blender-launcher.exe`).
+            - **Linux x64 (`blender-5.2.4-goo-linux-x64.tar.xz`)**: Extract (`tar -xf blender-5.2.4-goo-linux-x64.tar.xz`) and run `./blender`.
+
+            ### Automated Verification in CI
+            - **Linux x64 OpenGL (`llvmpipe`)** and **Linux x64 Vulkan (`lavapipe`)**: Full `goo_engine_ci_test.py` suite passed (Goo 3.5 / 4.4 / stock 4.x `.blend` migration, all 13 Goo shader nodes, Bloom, GTAO, SSR + Refraction, SSS, Volumetrics, DoF, Motion Blur, Planar/Sphere/Volume LightProbes, Hair Curves, Light Groups, and stock `BLENDER_EEVEE` sanity).
+            - **Windows x64**: `Release` build compiled & verified (`5.2.4 LTS Goo Engine` version branding, RNA/node registration, and binary SDNA `.blend` migration suite).
+          files: |
+            release-assets/blender-*.zip
+            release-assets/blender-*.zip.sha256
+            release-assets/blender-*.tar.xz
+            release-assets/blender-*.tar.xz.sha256
