@@ -4,6 +4,8 @@
 
 #pragma once
 
+#include "gpu_shader_utildefines_lib.glsl"
+
 /* Shared surface shading + alpha handling + render pass / Cryptomatte writes for meshes and curves. */
 
 float4 goo_surface_frag_exec()

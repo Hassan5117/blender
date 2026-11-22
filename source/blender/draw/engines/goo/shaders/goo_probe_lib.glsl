@@ -9,6 +9,7 @@
 #include "gpu_shader_math_matrix_construct_lib.glsl"
 #include "gpu_shader_math_matrix_conversion_lib.glsl"
 #include "gpu_shader_math_vector_reduce_lib.glsl"
+#include "gpu_shader_utildefines_lib.glsl"
 
 #ifdef GOO_INDIRECT_READ
 

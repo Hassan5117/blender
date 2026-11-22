@@ -7,6 +7,7 @@
 #pragma once
 
 #include "draw_view_lib.glsl"
+#include "gpu_shader_utildefines_lib.glsl"
 
 float goo_vol_z_to_dist(float z_norm)
 {

@@ -8,6 +8,7 @@ COMPUTE_SHADER_CREATE_INFO(goo_mblur_gather)
 
 #include "draw_view_lib.glsl"
 #include "eevee_utility_tx.bsl.hh"
+#include "gpu_shader_utildefines_lib.glsl"
 
 float2 goo_mblur_clamp_len(float2 v, float max_len)
 {

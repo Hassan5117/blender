@@ -8,6 +8,7 @@ COMPUTE_SHADER_CREATE_INFO(goo_dof_gather)
 
 #include "eevee_utility_tx.bsl.hh"
 #include "gpu_shader_math_constants_lib.glsl"
+#include "gpu_shader_utildefines_lib.glsl"
 
 float2 goo_dof_polygon_map(float r, float theta, float blades, float rotation)
 {

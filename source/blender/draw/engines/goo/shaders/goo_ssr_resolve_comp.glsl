@@ -7,6 +7,7 @@
 COMPUTE_SHADER_CREATE_INFO(goo_ssr_resolve)
 
 #include "gpu_shader_math_base_lib.glsl"
+#include "gpu_shader_utildefines_lib.glsl"
 
 void main()
 {

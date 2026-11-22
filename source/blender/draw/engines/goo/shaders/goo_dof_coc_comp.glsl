@@ -7,6 +7,7 @@
 COMPUTE_SHADER_CREATE_INFO(goo_dof_coc)
 
 #include "draw_view_lib.glsl"
+#include "gpu_shader_utildefines_lib.glsl"
 
 shared float sh_fg_coc[256];
 shared float sh_bg_coc[256];

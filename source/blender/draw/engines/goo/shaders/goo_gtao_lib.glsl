@@ -17,6 +17,7 @@
 #include "gpu_shader_math_safe_lib.glsl"
 #include "gpu_shader_math_vector_reduce_lib.glsl"
 #include "gpu_shader_math_vector_safe_lib.glsl"
+#include "gpu_shader_utildefines_lib.glsl"
 
 SHADER_LIBRARY_CREATE_INFO(UtilityTexture)
 SHADER_LIBRARY_CREATE_INFO(draw_view)

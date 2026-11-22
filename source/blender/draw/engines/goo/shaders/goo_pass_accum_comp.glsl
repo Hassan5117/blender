@@ -7,6 +7,7 @@
 COMPUTE_SHADER_CREATE_INFO(goo_pass_accum)
 
 #include "draw_view_lib.glsl"
+#include "gpu_shader_utildefines_lib.glsl"
 
 void main()
 {

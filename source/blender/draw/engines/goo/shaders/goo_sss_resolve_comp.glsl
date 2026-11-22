@@ -9,6 +9,7 @@ COMPUTE_SHADER_CREATE_INFO(goo_sss_resolve)
 #include "draw_view_lib.glsl"
 #include "eevee_utility_tx.bsl.hh"
 #include "gpu_shader_math_constants_lib.glsl"
+#include "gpu_shader_utildefines_lib.glsl"
 
 void main()
 {

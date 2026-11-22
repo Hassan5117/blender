@@ -13,6 +13,7 @@ COMPUTE_SHADER_CREATE_INFO(goo_ssr_trace)
 #include "gpu_shader_math_matrix_construct_lib.glsl"
 #include "gpu_shader_math_safe_lib.glsl"
 #include "gpu_shader_math_vector_safe_lib.glsl"
+#include "gpu_shader_utildefines_lib.glsl"
 
 void main()
 {
