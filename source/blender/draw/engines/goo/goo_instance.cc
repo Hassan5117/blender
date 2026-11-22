@@ -130,7 +130,9 @@ void Instance::init()
 
   is_image_render_ = draw_ctx->is_scene_render();
   is_viewport_image_render_ = draw_ctx->is_viewport_image_render();
-  film_transparent_ = (scene != nullptr) && (scene->r.alphamode == R_ALPHAPREMUL);
+  film_transparent_ = (scene != nullptr) && (scene->r.alphamode == R_ALPHAPREMUL) &&
+                      (is_image_render_ || draw_ctx->v3d == nullptr ||
+                       draw_ctx->v3d->shading.type == OB_RENDER);
 
   compute_extents(scene, int2(draw_ctx->viewport_size_get()));
   bloom.init(scene, render_extent_);
@@ -154,10 +156,11 @@ void Instance::begin_sync()
 
   LookdevParameters lookdev_params;
   bool use_lookdev_world = false;
-  if (!is_image_render_ && draw_ctx->v3d != nullptr) {
+  if (!is_image_render_ && draw_ctx->v3d != nullptr &&
+      (vl == nullptr || vl->world_override == nullptr))
+  {
     lookdev_params = LookdevParameters(draw_ctx->v3d);
-    use_lookdev_world = !lookdev_params.show_scene_world &&
-                        (vl == nullptr || vl->world_override == nullptr);
+    use_lookdev_world = !lookdev_params.show_scene_world;
   }
 
   World *world = (vl && vl->world_override) ? vl->world_override :
@@ -891,7 +894,11 @@ void Instance::render_single_sample(Manager &manager,
 
   main_fb_.ensure(GPU_ATTACHMENT_TEXTURE(dst_depth), GPU_ATTACHMENT_TEXTURE(dst_color));
   main_fb_.bind();
-  const double4 clear_col = film_transparent_ ? double4(0.0) : double4(world_color_);
+  const float bg_alpha = film_transparent_ ? 0.0f : probes.probe_block().lookdev_params.x;
+  const double4 clear_col = double4(double(world_color_.x * bg_alpha),
+                                    double(world_color_.y * bg_alpha),
+                                    double(world_color_.z * bg_alpha),
+                                    double(bg_alpha));
   GPU_framebuffer_clear_color(main_fb_, clear_col);
   manager.submit(surface_ps_, sample_view);
 
@@ -1166,7 +1173,7 @@ void Instance::draw_to(Manager &manager, View &view, gpu::Texture *color, gpu::T
                                            has_world_shader_,
                                            use_sky_,
                                            world_color_,
-                                           scene_updated || !taa_history_valid_);
+                                           scene_updated);
     probes.set_sss_active(sss.enabled());
     prepass_depth_ptr_ = prepass_depth_tx_;
     scene_color_ptr_ = need_scene_color ? scene_color_tx_.gpu_texture() :

@@ -182,9 +182,23 @@ void ProbeModule::begin_sync(const Scene *scene,
   }
   env_oct_res_ = pot;
 
+  if (!buffers_initialized_) {
+    volume_sh_buf_.clear_to_zero();
+    sphere_buf_.as_span().fill(GooSphereProbeData{});
+    planar_buf_.as_span().fill(GooPlanarProbeData{});
+    volume_buf_.as_span().fill(GooVolumeProbeData{});
+    buffers_initialized_ = true;
+  }
+
   indirect_intensity_ = scene ? std::max(scene->eevee.indirect_light_intensity, 0.0f) : 1.0f;
-  indirect_clamp_ = scene ? std::max(scene->eevee.clamp_surface_indirect, 0.0f) : 0.0f;
-  has_world_ibl_ = has_world_shader && use_sky;
+  const float new_indirect_clamp = scene ? std::max(scene->eevee.clamp_surface_indirect, 0.0f) :
+                                           0.0f;
+  const bool new_has_world_ibl = has_world_shader && use_sky;
+  const bool clamp_changed = assign_if_different(indirect_clamp_, new_indirect_clamp);
+  const bool ibl_changed = assign_if_different(has_world_ibl_, new_has_world_ibl);
+  if (clamp_changed || ibl_changed) {
+    probes_dirty_ = true;
+  }
 
   int ssr_flags = 0;
   float4 ssr_params(0.25f, 0.5f, 0.2f, 0.075f);
@@ -403,7 +417,6 @@ void ProbeModule::end_sync()
   sphere_buf_.push_update();
   planar_buf_.push_update();
   volume_buf_.push_update();
-  volume_sh_buf_.push_update();
 }
 
 void ProbeModule::dispatch_cubemap_to_oct(Manager &manager, gpu::Texture *cube_tx, int dst_layer)

@@ -35,6 +35,7 @@ void main()
   nodetree_surface(0.0f);
 
   float3 world_rad = g_goo_radiance;
+  float world_alpha = 1.0f;
 #ifdef GOO_INDIRECT_READ
   if ((goo_probe_buf.capture_flags & GOO_CAPTURE_WORLD) == 0 &&
       goo_probe_buf.lookdev_params.z > 0.5f)
@@ -42,16 +43,18 @@ void main()
     if (goo_probe_buf.lookdev_params.y > 0.01f && goo_probe_buf.lookdev_params.w > 0.5f) {
       world_rad = goo_sample_env_probe(0, g_data.P, goo_probe_buf.lookdev_params.y);
     }
-    world_rad *= saturate(goo_probe_buf.lookdev_params.x);
+    world_alpha = saturate(goo_probe_buf.lookdev_params.x);
+    world_rad *= world_alpha;
   }
 #endif
 
 #ifdef GOO_PASS_WRITE
   if (goo_pass_buf.env_id >= 0 && (goo_probe_buf.capture_flags & GOO_CAPTURE_NO_PASS_WRITE) == 0) {
-    imageStoreFast(
-        goo_rp_color_img, int3(int2(gl_FragCoord.xy), goo_pass_buf.env_id), float4(world_rad, 1.0f));
+    imageStoreFast(goo_rp_color_img,
+                   int3(int2(gl_FragCoord.xy), goo_pass_buf.env_id),
+                   float4(g_goo_radiance, 1.0f));
   }
 #endif
 
-  out_color = float4(world_rad, 1.0f);
+  out_color = float4(world_rad, world_alpha);
 }

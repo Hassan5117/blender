@@ -1585,7 +1585,10 @@ void goo_store_surface_passes(int2 texel, float holdout, uint resource_id)
         goo_rp_color_img, int3(texel, goo_pass_buf.ao_id), float4(float3(ao) * vis, 1.0f));
   }
   if (goo_pass_buf.crypto_flags != 0 && holdout < 0.999f) {
-    float2 obj_asset = goo_crypto_object_buf[resource_id];
+    float2 obj_asset =
+        ((goo_pass_buf.crypto_flags & (GOO_CRYPTO_FLAG_OBJECT | GOO_CRYPTO_FLAG_ASSET)) != 0) ?
+            goo_crypto_object_buf[resource_id] :
+            float2(0.0f);
     imageStoreFast(
         goo_rp_crypto_img, texel, float4(obj_asset.x, obj_asset.y, goo_material_hash, 1.0f));
   }

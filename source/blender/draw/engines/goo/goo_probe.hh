@@ -82,7 +82,7 @@ class ProbeModule {
       "GooPlanarProbeData"};
   StorageArrayBuffer<GooVolumeProbeData, GOO_MAX_VOLUME_PROBES> volume_buf_ = {
       "GooVolumeProbeData"};
-  StorageArrayBuffer<GooSHL2, GOO_MAX_VOLUME_SH_CELLS> volume_sh_buf_ = {"GooVolumeSHL2"};
+  StorageArrayBuffer<GooSHL2, GOO_MAX_VOLUME_SH_CELLS, true> volume_sh_buf_ = {"GooVolumeSHL2"};
 
   Texture env_probe_tx_ = {"goo.env_probe_tx"};
   Texture planar_tx_ = {"goo.planar_tx"};
@@ -136,6 +136,7 @@ class ProbeModule {
   int prev_ssr_flags_ = 0;
   float4 prev_ssr_params_ = float4(0.0f);
   bool ssr_changed_ = false;
+  bool buffers_initialized_ = false;
 
   void ensure_static_textures(int env_res, int env_layers);
   void init_compute_passes();
