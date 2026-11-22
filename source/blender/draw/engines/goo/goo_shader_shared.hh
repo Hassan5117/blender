@@ -130,6 +130,8 @@ struct [[host_shared]] GooProbeBlock {
   float4 indirect_params;
   /** x: bg_opacity; y: bg_blur_lod; z: is_lookdev_bg; w: has_world_ibl. */
   float4 lookdev_params;
+  /** x: sss_samples; y: sss_jitter_threshold; z: sss_active (>0.5); w: unused. */
+  float4 sss_params;
   int sphere_probe_count;
   int planar_probe_count;
   int volume_probe_count;
@@ -138,6 +140,51 @@ struct [[host_shared]] GooProbeBlock {
   int env_oct_res;
   int _pad0;
   int _pad1;
+};
+
+struct [[host_shared]] GooVolumeBlock {
+  float4x4 obj_to_world;
+  float4x4 world_to_obj;
+  /** xyz: orco_mul; w: object bounds min Z in view space (or 0). */
+  float4 orco_mul;
+  /** xyz: orco_add; w: object bounds max Z in view space (or 0). */
+  float4 orco_add;
+  /** xyz: froxel tex size (W, H, D); w: volume flags (`GOO_VOL_FLAG_*`). */
+  int4 froxel_size;
+  /** xyz: 1.0 / froxel_size; w: shadow_steps. */
+  float4 inv_froxel_size;
+  /** x: depth_near; y: depth_far; z: depth_distribution; w: is_perspective (>0.5). */
+  float4 depth_params;
+  /** xy: coord_scale; zw: 1.0 / main_extent. */
+  float4 coord_params;
+  /** x: volumetric_light_clamp; y: clamp_volume_direct; z: clamp_volume_indirect; w: anisotropy_unused. */
+  float4 clamp_params;
+};
+
+struct [[host_shared]] GooDofBlock {
+  /** x: coc_mul; y: coc_bias; z: fx_max_coc; w: is_persp (>0.5). */
+  float4 coc_params;
+  /** x: bokeh_blades; y: bokeh_rotation; z: bokeh_threshold; w: bokeh_neighbor_max. */
+  float4 bokeh_params;
+  /** xy: aniso_scale; zw: aniso_scale_inv. */
+  float4 aniso_params;
+  /** x: width; y: height; z: bokeh_denoise_fac * 1000; w: hq_slight_defocus (0/1). */
+  float4 filter_params;
+};
+
+struct [[host_shared]] GooMBlurBlock {
+  float4x4 prev_persmat;
+  float4x4 curr_persmat;
+  float4x4 next_persmat;
+  /** x: max_blur_px; y: depth_scale; z: jitter_seed; w: motion_blur_shutter (unused=1.0). */
+  float4 mblur_params;
+  /** x: width; y: height; z: tile_x; w: tile_y. */
+  int4 extent_params;
+};
+
+struct [[host_shared]] GooVelocityObject {
+  float4x4 prev_obmat;
+  float4x4 next_obmat;
 };
 
 #ifndef GPU_SHADER

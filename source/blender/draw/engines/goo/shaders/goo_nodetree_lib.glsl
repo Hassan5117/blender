@@ -19,6 +19,7 @@
 
 #pragma once
 
+#include "infos/goo_effects_infos.hh"
 #include "infos/goo_indirect_infos.hh"
 #include "infos/goo_material_infos.hh"
 
@@ -27,6 +28,7 @@ SHADER_LIBRARY_CREATE_INFO(goo_render_passes)
 SHADER_LIBRARY_CREATE_INFO(goo_probe_ubo)
 SHADER_LIBRARY_CREATE_INFO(goo_indirect_read)
 SHADER_LIBRARY_CREATE_INFO(goo_ssr_write)
+SHADER_LIBRARY_CREATE_INFO(goo_sss_write)
 SHADER_LIBRARY_CREATE_INFO(UtilityTexture)
 SHADER_LIBRARY_CREATE_INFO(draw_view)
 
@@ -392,6 +394,11 @@ float3 g_goo_ssr_throughput;
 float3 g_goo_ssr_fallback;
 float g_goo_ssr_mask;
 float g_goo_ssr_weight;
+float3 g_goo_sss_irrad;
+float3 g_goo_sss_albedo;
+float3 g_goo_sss_radius;
+float3 g_goo_sss_direct_radiance;
+float g_goo_sss_weight;
 
 void closure_weights_reset(float /*closure_rand*/)
 {
@@ -409,6 +416,11 @@ void closure_weights_reset(float /*closure_rand*/)
   g_goo_ssr_fallback = float3(0.0f);
   g_goo_ssr_mask = 0.0f;
   g_goo_ssr_weight = 0.0f;
+  g_goo_sss_irrad = float3(0.0f);
+  g_goo_sss_albedo = float3(0.0f);
+  g_goo_sss_radius = float3(0.0f);
+  g_goo_sss_direct_radiance = float3(0.0f);
+  g_goo_sss_weight = 0.0f;
 }
 
 void goo_pass_accum_reset()
@@ -1062,13 +1074,130 @@ Closure closure_eval(ClosureDiffuse diffuse)
   return Closure(0);
 }
 
-Closure closure_eval(ClosureSubsurface diffuse)
+float3 goo_eval_sss_translucency(float3 P, float3 N, float3 sss_radius)
 {
-  /* TODO(goo-port): Goo 4.4 SSS. Approximated as diffuse. */
-  float3 light = goo_diffuse_light(diffuse.N, g_data.P, diffuse.color);
-  g_goo_radiance += diffuse.color * diffuse.weight * light;
-  g_goo_diff_color += diffuse.color * diffuse.weight;
-  g_goo_diff_light += light * diffuse.weight;
+  float3 n_n = safe_normalize(N);
+  float3 safe_rad = max(sss_radius * (0.25f / 3.14159265f), float3(1e-4f));
+  float3 P_in = P - n_n * 0.005f;
+  float3 total = float3(0.0f);
+
+  for (int i = 0; i < goo_light_buf.light_count; i++) {
+    GooLightData ld = goo_light_buf.lights[i];
+    if (!goo_light_group_match(ld.light_group_bits, goo_light_groups)) {
+      continue;
+    }
+    float att_unshadowed;
+    float3 L;
+    goo_eval_light_unshadowed(i, P, att_unshadowed, L);
+    float ndotl_back = max(0.0f, dot(-n_n, L));
+    if (att_unshadowed <= 0.0f || ndotl_back <= 1e-5f) {
+      continue;
+    }
+
+    float3 radiance = ld.color_energy.rgb * ld.spot_shadow.w;
+    if (ld.spot_shadow.y < -0.5f || !goo_light_group_match(ld.light_group_bits, goo_light_group_shadows)) {
+      float3 thin_trans = exp(-0.25f / safe_rad);
+      total += radiance * att_unshadowed * ndotl_back * (1.0f / 3.14159265f) * thin_trans;
+      continue;
+    }
+
+    int shadow_start = int(ld.spot_shadow.y + 0.5f);
+    int shadow_count = int(ld.spot_shadow.z + 0.5f);
+    int light_type = int(ld.position_type.w + 0.5f);
+    int slice = -1;
+    float4 clip = float4(0.0f);
+
+    if (light_type == GOO_LIGHT_SUN) {
+      for (int c = 0; c < shadow_count; c++) {
+        GooShadowSlice sc = goo_shadow_buf.slices[shadow_start + c];
+        float4 cl = sc.vp * float4(P_in, 1.0f);
+        if (cl.w > 0.0f) {
+          float3 co = (cl.xyz / cl.w) * 0.5f + 0.5f;
+          if (co.x >= 0.01f && co.x <= 0.99f && co.y >= 0.01f && co.y <= 0.99f && co.z >= 0.0f &&
+              co.z <= 1.0f)
+          {
+            slice = shadow_start + c;
+            clip = cl;
+            break;
+          }
+        }
+      }
+    }
+    else if (light_type == GOO_LIGHT_SPOT) {
+      slice = shadow_start;
+      clip = goo_shadow_buf.slices[slice].vp * float4(P_in, 1.0f);
+    }
+    else if (light_type == GOO_LIGHT_POINT && shadow_count == 6) {
+      float3 d = P_in - ld.position_type.xyz;
+      float3 ad = abs(d);
+      int face = 0;
+      if (ad.x >= ad.y && ad.x >= ad.z) {
+        face = (d.x >= 0.0f) ? 0 : 1;
+      }
+      else if (ad.y >= ad.z) {
+        face = (d.y >= 0.0f) ? 2 : 3;
+      }
+      else {
+        face = (d.z >= 0.0f) ? 4 : 5;
+      }
+      slice = shadow_start + face;
+      clip = goo_shadow_buf.slices[slice].vp * float4(P_in, 1.0f);
+    }
+
+    if (slice < 0 || clip.w <= 1e-6f) {
+      continue;
+    }
+
+    GooShadowSlice s = goo_shadow_buf.slices[slice];
+    float3 coord = (clip.xyz / clip.w) * 0.5f + 0.5f;
+    if (coord.x < 0.0f || coord.x > 1.0f || coord.y < 0.0f || coord.y > 1.0f || coord.z < 0.0f ||
+        coord.z > 1.0f)
+    {
+      continue;
+    }
+
+    float stored_d = textureLod(goo_shadow_tx, float3(coord.xy, float(slice)), 0.0f).r;
+    if (stored_d >= 0.99999f) {
+      continue;
+    }
+
+    float thickness = 0.0f;
+    if (s.params.z > 0.0f) {
+      thickness = max((coord.z - stored_d) * s.params.z, 0.0f);
+    }
+    else {
+      float far = max(ld.extra.y, 1.0f);
+      float near = max(ld.extra.z, 1e-3f);
+      float z_hit = (near * far) / max(far - stored_d * (far - near), 1e-5f);
+      float z_cur = (near * far) / max(far - coord.z * (far - near), 1e-5f);
+      thickness = max(z_cur - z_hit, 0.0f);
+    }
+
+    float3 trans = exp(-thickness / safe_rad);
+    total += radiance * att_unshadowed * ndotl_back * (1.0f / 3.14159265f) * trans;
+  }
+  return total;
+}
+
+Closure closure_eval(ClosureSubsurface sss)
+{
+  float3 light = goo_diffuse_light(sss.N, g_data.P, sss.color);
+  if ((goo_material_flags & GOO_MAT_FLAG_SSS_TRANSLUCENCY) != 0) {
+    light += goo_eval_sss_translucency(g_data.P, sss.N, sss.sss_radius);
+  }
+  float3 direct_rad = sss.color * sss.weight * light;
+  g_goo_radiance += direct_rad;
+  g_goo_diff_color += sss.color * sss.weight;
+  g_goo_diff_light += light * sss.weight;
+
+  float max_rad = max(sss.sss_radius.r, max(sss.sss_radius.g, sss.sss_radius.b));
+  if (sss.weight > 1e-6f && max_rad > 1e-5f) {
+    g_goo_sss_irrad += light * sss.weight;
+    g_goo_sss_albedo += sss.color * sss.weight;
+    g_goo_sss_radius += sss.sss_radius * sss.weight;
+    g_goo_sss_direct_radiance += direct_rad;
+    g_goo_sss_weight += sss.weight;
+  }
   return Closure(0);
 }
 

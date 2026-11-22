@@ -363,7 +363,8 @@ void LightModule::light_sync(Object *ob, const View &camera_view)
             const int layer = light_buf_.shadow_slice_count++;
             GooShadowSlice &slice = shadow_buf_.slices[layer];
             slice.vp = winmat * viewmat;
-            slice.params = float4(texel_world * 1.5f, 0.0005f, 0.0f, 1.0f / float(shadow_res_));
+            slice.params = float4(
+                texel_world * 1.5f, 0.0005f, far - near, 1.0f / float(shadow_res_));
             render_slices_.append({layer, viewmat, winmat});
           }
         }

@@ -240,7 +240,7 @@ class RENDER_PT_color_management_white_balance(RenderButtonsPanel, Panel):
 class RENDER_PT_eevee_motion_blur(RenderButtonsPanel, Panel):
     bl_label = "Motion Blur"
     bl_options = {'DEFAULT_CLOSED'}
-    COMPAT_ENGINES = {'BLENDER_EEVEE'}
+    COMPAT_ENGINES = {'BLENDER_EEVEE', 'GOO_ENGINE'}
 
     @classmethod
     def poll(cls, context):
@@ -272,7 +272,7 @@ class RENDER_PT_eevee_motion_blur_curve(RenderButtonsPanel, Panel):
     bl_label = "Shutter Curve"
     bl_parent_id = "RENDER_PT_eevee_motion_blur"
     bl_options = {'DEFAULT_CLOSED'}
-    COMPAT_ENGINES = {'BLENDER_EEVEE'}
+    COMPAT_ENGINES = {'BLENDER_EEVEE', 'GOO_ENGINE'}
 
     def draw(self, context):
         layout = self.layout
@@ -300,7 +300,7 @@ class RENDER_PT_eevee_motion_blur_curve(RenderButtonsPanel, Panel):
 class RENDER_PT_eevee_depth_of_field(RenderButtonsPanel, Panel):
     bl_label = "Depth of Field"
     bl_options = {'DEFAULT_CLOSED'}
-    COMPAT_ENGINES = {'BLENDER_EEVEE'}
+    COMPAT_ENGINES = {'BLENDER_EEVEE', 'GOO_ENGINE'}
 
     @classmethod
     def poll(cls, context):
@@ -317,6 +317,9 @@ class RENDER_PT_eevee_depth_of_field(RenderButtonsPanel, Panel):
         col.prop(props, "bokeh_max_size")
         col.prop(props, "bokeh_threshold")
         col.prop(props, "bokeh_neighbor_max")
+        if context.engine == 'GOO_ENGINE':
+            col.prop(props, "bokeh_denoise_fac")
+            col.prop(props, "use_bokeh_high_quality_slight_defocus")
 
         col = layout.column(align=False, heading="Jitter Camera")
         row = col.row(align=True)
@@ -330,7 +333,7 @@ class RENDER_PT_eevee_depth_of_field(RenderButtonsPanel, Panel):
 class RENDER_PT_eevee_volumes(RenderButtonsPanel, Panel):
     bl_label = "Volumes"
     bl_options = {'DEFAULT_CLOSED'}
-    COMPAT_ENGINES = {'BLENDER_EEVEE'}
+    COMPAT_ENGINES = {'BLENDER_EEVEE', 'GOO_ENGINE'}
 
     @classmethod
     def poll(cls, context):
@@ -357,7 +360,7 @@ class RENDER_PT_eevee_volumes_range(RenderButtonsPanel, Panel):
     bl_label = "Custom Range"
     bl_options = {'DEFAULT_CLOSED'}
     bl_parent_id = "RENDER_PT_eevee_volumes"
-    COMPAT_ENGINES = {'BLENDER_EEVEE'}
+    COMPAT_ENGINES = {'BLENDER_EEVEE', 'GOO_ENGINE'}
 
     @classmethod
     def poll(cls, context):
@@ -1337,6 +1340,64 @@ class RENDER_PT_goo_indirect_lighting(RenderButtonsPanel, Panel):
         col.prop(props, "clamp_surface_indirect", text="Indirect Clamping")
 
 
+class RENDER_PT_goo_subsurface_scattering(RenderButtonsPanel, Panel):
+    bl_label = "Subsurface Scattering"
+    bl_options = {'DEFAULT_CLOSED'}
+    COMPAT_ENGINES = {'GOO_ENGINE'}
+
+    @classmethod
+    def poll(cls, context):
+        return (context.engine in cls.COMPAT_ENGINES)
+
+    def draw(self, context):
+        layout = self.layout
+        layout.use_property_split = True
+        layout.use_property_decorate = False
+
+        scene = context.scene
+        props = scene.eevee
+
+        col = layout.column()
+        col.prop(props, "sss_samples")
+        col.prop(props, "sss_jitter_threshold")
+
+
+class RENDER_PT_goo_volumetric_lighting(RenderButtonsPanel, Panel):
+    bl_label = "Volumetric Lighting"
+    bl_parent_id = "RENDER_PT_eevee_volumes"
+    bl_options = {'DEFAULT_CLOSED'}
+    COMPAT_ENGINES = {'GOO_ENGINE'}
+
+    @classmethod
+    def poll(cls, context):
+        return (context.engine in cls.COMPAT_ENGINES)
+
+    def draw_header(self, context):
+        scene = context.scene
+        props = scene.eevee
+        self.layout.prop(props, "use_volumetric_lights", text="")
+
+    def draw(self, context):
+        layout = self.layout
+        layout.use_property_split = True
+        layout.use_property_decorate = False
+
+        scene = context.scene
+        props = scene.eevee
+
+        layout.active = props.use_volumetric_lights
+        col = layout.column()
+        col.prop(props, "volumetric_light_clamp", text="Light Clamping")
+
+        col = layout.column(align=False, heading="Volumetric Shadows")
+        row = col.row(align=True)
+        sub = row.row(align=True)
+        sub.prop(props, "use_volumetric_shadows", text="")
+        sub = sub.row(align=True)
+        sub.active = props.use_volumetric_shadows
+        sub.prop(props, "volumetric_shadow_samples", text="Shadow Samples")
+
+
 classes = (
     RENDER_PT_context,
     RENDER_PT_goo_bloom,
@@ -1344,6 +1405,7 @@ classes = (
     RENDER_PT_goo_ambient_occlusion,
     RENDER_PT_goo_screen_space_reflections,
     RENDER_PT_goo_indirect_lighting,
+    RENDER_PT_goo_subsurface_scattering,
     RENDER_PT_eevee_sampling,
     RENDER_PT_eevee_sampling_viewport,
     RENDER_PT_eevee_sampling_render,
@@ -1361,6 +1423,7 @@ classes = (
     RENDER_PT_eevee_gi_approximation,
     RENDER_PT_eevee_volumes,
     RENDER_PT_eevee_volumes_range,
+    RENDER_PT_goo_volumetric_lighting,
     RENDER_PT_eevee_hair,
     RENDER_PT_simplify,
     RENDER_PT_simplify_viewport,

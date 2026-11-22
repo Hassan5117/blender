@@ -28,3 +28,8 @@ struct CurvesPoint {
 struct WorldPoint {
   float3 lP;
 };
+
+struct VolumePoint {
+  float3 lP;
+  float3 orco_default;
+};

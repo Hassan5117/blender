@@ -97,10 +97,14 @@ set(SRC
   engines/goo/goo_light.cc
   engines/goo/goo_lookdev.cc
   engines/goo/goo_material.cc
+  engines/goo/goo_dof.cc
+  engines/goo/goo_motion_blur.cc
   engines/goo/goo_probe.cc
   engines/goo/goo_render_pass.cc
   engines/goo/goo_sampling.cc
   engines/goo/goo_ssr.cc
+  engines/goo/goo_sss.cc
+  engines/goo/goo_volume.cc
   engines/image/image_shader.cc
   engines/eevee/eevee_ambient_occlusion.cc
   engines/eevee/eevee_camera.cc
@@ -241,17 +245,21 @@ set(SRC
   engines/image/image_engine.h
   engines/goo/goo_bloom.hh
   engines/goo/goo_defines.hh
+  engines/goo/goo_dof.hh
   engines/goo/goo_engine.h
   engines/goo/goo_instance.hh
   engines/goo/goo_light.hh
   engines/goo/goo_lookdev.hh
   engines/goo/goo_material.hh
+  engines/goo/goo_motion_blur.hh
   engines/goo/goo_probe.hh
   engines/goo/goo_render_pass.hh
   engines/goo/goo_sampling.hh
   engines/goo/goo_shader.hh
   engines/goo/goo_shader_shared.hh
   engines/goo/goo_ssr.hh
+  engines/goo/goo_sss.hh
+  engines/goo/goo_volume.hh
   engines/image/image_instance.hh
   engines/image/image_partial_updater.hh
   engines/image/image_private.hh
@@ -351,6 +359,7 @@ set(GLSL_SRC
 
   engines/image/shaders/infos/engine_image_infos.hh
   engines/goo/shaders/infos/goo_bloom_infos.hh
+  engines/goo/shaders/infos/goo_effects_infos.hh
   engines/goo/shaders/infos/goo_indirect_infos.hh
   engines/goo/shaders/infos/goo_material_infos.hh
   engines/goo/shaders/infos/goo_post_infos.hh
@@ -782,12 +791,16 @@ set(GLSL_SRC
   engines/goo/goo_shader_shared.hh
   engines/goo/shaders/goo_attributes_curves_lib.glsl
   engines/goo/shaders/goo_attributes_mesh_lib.glsl
+  engines/goo/shaders/goo_attributes_volume_lib.glsl
   engines/goo/shaders/goo_attributes_world_lib.glsl
   engines/goo/shaders/goo_color_copy_comp.glsl
   engines/goo/shaders/goo_color_downsample_array_comp.glsl
   engines/goo/shaders/goo_color_downsample_comp.glsl
   engines/goo/shaders/goo_cryptomatte_sort_comp.glsl
   engines/goo/shaders/goo_cube_to_sh_comp.glsl
+  engines/goo/shaders/goo_dof_coc_comp.glsl
+  engines/goo/shaders/goo_dof_dilate_comp.glsl
+  engines/goo/shaders/goo_dof_gather_comp.glsl
   engines/goo/shaders/goo_effect_bloom_frag.glsl
   engines/goo/shaders/goo_effect_gtao_frag.glsl
   engines/goo/shaders/goo_effect_taa_frag.glsl
@@ -809,8 +822,13 @@ set(GLSL_SRC
   engines/goo/shaders/goo_material_surface_frag.glsl
   engines/goo/shaders/goo_material_surface_lib.glsl
   engines/goo/shaders/goo_material_surface_vert.glsl
+  engines/goo/shaders/goo_material_volume_frag.glsl
+  engines/goo/shaders/goo_material_volume_vert.glsl
   engines/goo/shaders/goo_material_world_frag.glsl
   engines/goo/shaders/goo_material_world_vert.glsl
+  engines/goo/shaders/goo_mblur_dilate_comp.glsl
+  engines/goo/shaders/goo_mblur_gather_comp.glsl
+  engines/goo/shaders/goo_mblur_tile_comp.glsl
   engines/goo/shaders/goo_nodetree_frag_lib.glsl
   engines/goo/shaders/goo_nodetree_lib.glsl
   engines/goo/shaders/goo_nodetree_type_lib.glsl
@@ -828,8 +846,19 @@ set(GLSL_SRC
   engines/goo/shaders/goo_shadow_vert.glsl
   engines/goo/shaders/goo_ssr_resolve_comp.glsl
   engines/goo/shaders/goo_ssr_trace_comp.glsl
+  engines/goo/shaders/goo_sss_resolve_comp.glsl
   engines/goo/shaders/goo_surface_flat_frag.glsl
   engines/goo/shaders/goo_surface_flat_vert.glsl
+  engines/goo/shaders/goo_velocity_curves_vert.glsl
+  engines/goo/shaders/goo_velocity_frag.glsl
+  engines/goo/shaders/goo_velocity_vert.glsl
+  engines/goo/shaders/goo_vol_nodetree_frag_lib.glsl
+  engines/goo/shaders/goo_volume_clear_comp.glsl
+  engines/goo/shaders/goo_volume_integrate_comp.glsl
+  engines/goo/shaders/goo_volume_lib.glsl
+  engines/goo/shaders/goo_volume_nodetree_lib.glsl
+  engines/goo/shaders/goo_volume_resolve_comp.glsl
+  engines/goo/shaders/goo_volume_scatter_comp.glsl
 
   engines/image/image_shader_shared.hh
 

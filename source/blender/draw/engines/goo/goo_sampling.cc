@@ -10,6 +10,9 @@
 #include <algorithm>
 #include <cmath>
 
+#include "BKE_colortools.hh"
+
+#include "BLI_math_base.hh"
 #include "BLI_math_geom.h"
 #include "BLI_rand.h"
 
@@ -113,6 +116,39 @@ float4x4 Sampling::jittered_winmat(const float4x4 &base_winmat,
     window_translate_m4(winmat.ptr(), winmat.ptr(), jitter_ndc.x, jitter_ndc.y);
   }
   return winmat;
+}
+
+void Sampling::cdf_from_curvemapping(const CurveMapping &curve, Vector<float> &cdf)
+{
+  BLI_assert(cdf.size() > 1);
+  cdf[0] = 0.0f;
+  for (int u : IndexRange(cdf.size() - 1)) {
+    const float x = float(u + 1) / float(cdf.size() - 1);
+    cdf[u + 1] = cdf[u] + std::max(0.0f, BKE_curvemapping_evaluateF(&curve, 0, x));
+  }
+  const float total = std::max(cdf.last(), 1e-6f);
+  for (float &v : cdf) {
+    v /= total;
+  }
+  cdf.last() = 1.0f;
+}
+
+void Sampling::cdf_invert(const Vector<float> &cdf, Vector<float> &inverted_cdf)
+{
+  BLI_assert(cdf.first() == 0.0f && cdf.last() == 1.0f);
+  for (int u : inverted_cdf.index_range()) {
+    const float x = std::clamp(float(u) / float(std::max<int64_t>(1, inverted_cdf.size() - 1)),
+                               1e-5f,
+                               1.0f - 1e-5f);
+    for (int i : cdf.index_range().drop_front(1)) {
+      if (cdf[i] >= x) {
+        const float denom = cdf[i] - cdf[i - 1];
+        const float t = (denom > 1e-8f) ? ((x - cdf[i]) / denom) : 0.0f;
+        inverted_cdf[u] = (float(i) + t) / float(cdf.size() - 1);
+        break;
+      }
+    }
+  }
 }
 
 }  // namespace blender::goo

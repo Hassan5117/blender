@@ -62,6 +62,16 @@ class MaterialModule {
    */
   GPUMaterial *world_get(World *wo, bool deferred_compilation);
 
+  /**
+   * Return a compiled world volume shader if `wo` has a volume output, or nullptr otherwise.
+   */
+  GPUMaterial *world_volume_get(World *wo, bool deferred_compilation);
+
+  /**
+   * Return a compiled object volume shader if `ma` has a volume output, or nullptr otherwise.
+   */
+  GPUMaterial *object_volume_get(Material *ma, bool deferred_compilation);
+
   /** Number of materials still compiling this sync (used to redraw the viewport). */
   int queued_count = 0;
 

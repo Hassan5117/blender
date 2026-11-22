@@ -59,6 +59,21 @@ class ShaderModule {
   gpu::StaticShader ssr_trace = {"goo_ssr_trace"};
   gpu::StaticShader ssr_resolve = {"goo_ssr_resolve"};
 
+  /* Milestone 11: SSS, Depth of Field, Motion Blur, and Volumetrics. */
+  gpu::StaticShader sss_resolve = {"goo_sss_resolve"};
+  gpu::StaticShader dof_coc = {"goo_dof_coc"};
+  gpu::StaticShader dof_dilate = {"goo_dof_dilate"};
+  gpu::StaticShader dof_gather = {"goo_dof_gather"};
+  gpu::StaticShader velocity_mesh = {"goo_velocity_mesh"};
+  gpu::StaticShader velocity_curves = {"goo_velocity_curves"};
+  gpu::StaticShader mblur_tile = {"goo_mblur_tile"};
+  gpu::StaticShader mblur_dilate = {"goo_mblur_dilate"};
+  gpu::StaticShader mblur_gather = {"goo_mblur_gather"};
+  gpu::StaticShader volume_clear = {"goo_volume_clear"};
+  gpu::StaticShader volume_scatter = {"goo_volume_scatter"};
+  gpu::StaticShader volume_integrate = {"goo_volume_integrate"};
+  gpu::StaticShader volume_resolve = {"goo_volume_resolve"};
+
   UtilityTexture utility_tx;
 
   static ShaderModule &get();

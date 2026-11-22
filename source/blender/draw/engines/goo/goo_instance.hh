@@ -17,13 +17,17 @@
 #include "draw_view.hh"
 
 #include "goo_bloom.hh"
+#include "goo_dof.hh"
 #include "goo_light.hh"
 #include "goo_lookdev.hh"
 #include "goo_material.hh"
+#include "goo_motion_blur.hh"
 #include "goo_probe.hh"
 #include "goo_render_pass.hh"
 #include "goo_sampling.hh"
 #include "goo_ssr.hh"
+#include "goo_sss.hh"
+#include "goo_volume.hh"
 
 namespace blender {
 struct ModifierData;
@@ -92,6 +96,14 @@ class Instance : public DrawEngine {
   ProbeModule probes;
   /** Scene color/depth pyramids & Screen-Space Reflections. */
   SsrModule ssr;
+  /** Subsurface scattering, Depth of Field, Motion Blur, and Volumetrics. */
+  SssModule sss;
+  DofModule dof;
+  MotionBlurModule motion_blur;
+  VolumeModule volume;
+  const Object *camera_ob_ = nullptr;
+  int sample_override_ = 0;
+  int sample_step_offset_ = 0;
   /** Render passes, Shader AOVs, and Cryptomatte. */
   RenderPassModule render_passes;
   bool is_image_render_ = false;
@@ -174,6 +186,17 @@ class Instance : public DrawEngine {
   /** Draw into the given color/depth textures (used by viewport and F12). */
   void draw_to(Manager &manager, View &view, gpu::Texture *color, gpu::Texture *depth);
 
+  void set_camera_object(const Object *ob)
+  {
+    camera_ob_ = ob;
+  }
+
+  void set_sample_override(int samples, int step_offset)
+  {
+    sample_override_ = samples;
+    sample_step_offset_ = step_offset;
+  }
+
   void read_render_passes(RenderLayer *layer,
                           const ViewLayer *view_layer,
                           const char *viewname,
@@ -193,6 +216,9 @@ class Instance : public DrawEngine {
                             gpu::Texture *dst_color,
                             gpu::Texture *dst_depth,
                             int sample_index,
+                            int total_samples,
+                            const float4x4 &prev_persmat,
+                            const float4x4 &next_persmat,
                             bool gtao_active,
                             bool ssr_active,
                             bool need_scene_color);

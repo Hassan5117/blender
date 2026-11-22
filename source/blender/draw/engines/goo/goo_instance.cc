@@ -28,6 +28,7 @@
 #include "DNA_object_types.h"
 #include "DNA_particle_types.h"
 #include "DNA_scene_types.h"
+#include "DNA_view3d_types.h"
 #include "DNA_world_types.h"
 
 #include "GPU_capabilities.hh"
@@ -190,6 +191,10 @@ void Instance::begin_sync()
       draw_ctx->scene, world_color_, render_passes.ao_pass_enabled() ? render_passes.ao_distance() : 0.0f);
   probes.begin_sync(draw_ctx->scene, lookdev_params, has_world_shader_, use_sky_);
   ssr.init_buffers(render_extent_, probes.ssr_enabled(), probes, lights);
+  sss.begin_sync(probes);
+  motion_blur.begin_sync(draw_ctx->scene, vl, is_image_render_);
+  volume.begin_sync(
+      draw_ctx->scene, world, materials, probes, lights, render_extent_, deferred_compile);
   render_passes.begin_sync(vl, is_image_render_);
 
   if (dummy_depth_tx_.ensure_2d(gpu::TextureFormat::SFLOAT_32_DEPTH,
@@ -370,6 +375,7 @@ void Instance::configure_material_sub(PassMain::Sub &sub,
     render_passes.bind_resources(sub);
     probes.bind_resources(sub);
     ssr.bind_write_images(sub);
+    sss.bind_write_image(sub);
     sub.push_constant("goo_material_hash", render_passes.sync_material(mat));
     sub.push_constant("goo_refraction_depth", mat ? mat->refract_depth : 0.0f);
   }
@@ -421,6 +427,9 @@ void Instance::configure_material_sub(PassMain::Sub &sub,
     }
     if ((mat->blend_flag & MA_BL_SS_REFRACTION) != 0) {
       mat_flags |= GOO_MAT_FLAG_SS_REFRACTION;
+    }
+    if ((mat->blend_flag & MA_BL_TRANSLUCENCY) != 0) {
+      mat_flags |= GOO_MAT_FLAG_SSS_TRANSLUCENCY;
     }
   }
   if (is_refract) {
@@ -516,6 +525,9 @@ void Instance::sync_curves_object(ObjectRef &ob_ref,
   if (surf_gpumat == nullptr) {
     return;
   }
+  if (GPU_material_flag_get(surf_gpumat, GPU_MATFLAG_SUBSURFACE)) {
+    sss.mark_material_uses_sss();
+  }
 
   auto setup_batch = [&](PassMain::Sub &sub, GPUMaterial *mat_setup) -> gpu::Batch * {
     if (psys != nullptr) {
@@ -604,6 +616,7 @@ void Instance::sync_curves_object(ObjectRef &ob_ref,
     if (surf_geom != nullptr) {
       surf_call.draw(surf_geom, handle);
     }
+    motion_blur.sync_curves(ob_ref, draw_ctx->scene, psys, md, handle);
     has_refract_draws_ |= is_refract;
   }
 }
@@ -698,6 +711,18 @@ void Instance::object_sync(ObjectRef &ob_ref, Manager &manager)
       }
       Material *ma = mat_override ? mat_override : BKE_object_material_get_eval(ob, i + 1);
       GPUMaterial *gpumat = gpumats[i];
+      if (GPU_material_has_volume_output(gpumat)) {
+        GPUMaterial *vol_gpumat = materials.object_volume_get(ma, deferred_compile);
+        if (vol_gpumat != nullptr) {
+          volume.object_sync(manager, probes, ob, handle, geoms[i], vol_gpumat, deferred_compile);
+        }
+      }
+      if (!GPU_material_has_surface_output(gpumat)) {
+        continue;
+      }
+      if (GPU_material_flag_get(gpumat, GPU_MATFLAG_SUBSURFACE)) {
+        sss.mark_material_uses_sss();
+      }
       const bool is_refract = GPU_material_flag_get(gpumat, GPU_MATFLAG_REFRACT);
       const bool cull_back = ma && (ma->blend_flag & MA_BL_CULL_BACKFACE) != 0;
 
@@ -764,6 +789,7 @@ void Instance::object_sync(ObjectRef &ob_ref, Manager &manager)
         else {
           gpumat_sub_get(manager, gpumat, ma, false).draw(geoms[i], handle);
         }
+        motion_blur.sync_object(ob_ref, handle, geoms[i], cull_back);
       }
     }
     return;
@@ -781,12 +807,16 @@ void Instance::object_sync(ObjectRef &ob_ref, Manager &manager)
   const bool cull_back = ma && (ma->blend_flag & MA_BL_CULL_BACKFACE) != 0;
   (cull_back ? prepass_cull_sub_ : prepass_nocull_sub_)->draw(geom, handle);
   material_sub_get(ma).draw(geom, handle);
+  motion_blur.sync_object(ob_ref, handle, geom, cull_back);
 }
 
 void Instance::end_sync()
 {
   lights.end_sync();
   probes.end_sync();
+  sss.end_sync(render_extent_);
+  motion_blur.end_sync();
+  probes.set_sss_active(sss.enabled());
   render_passes.end_sync();
 
   if (materials.queued_count > 0 && !is_image_render_ && !is_viewport_image_render_) {
@@ -800,6 +830,9 @@ void Instance::render_single_sample(Manager &manager,
                                     gpu::Texture *dst_color,
                                     gpu::Texture *dst_depth,
                                     int sample_index,
+                                    int total_samples,
+                                    const float4x4 &prev_persmat,
+                                    const float4x4 &next_persmat,
                                     bool gtao_active,
                                     bool ssr_active,
                                     bool need_scene_color)
@@ -810,6 +843,7 @@ void Instance::render_single_sample(Manager &manager,
   prepass_depth_ptr_ = dummy_depth_tx_;
   gtao_horizon_ptr_ = dummy_horizon_tx_;
   scene_color_ptr_ = dummy_color_tx_;
+  probes.set_sss_active(false);
   probes.capture_planar_probes(manager,
                                sample_view,
                                render_extent_,
@@ -820,6 +854,7 @@ void Instance::render_single_sample(Manager &manager,
                                has_blend_draws_,
                                has_world_shader_,
                                use_sky_);
+  probes.set_sss_active(sss.enabled());
   prepass_depth_ptr_ = prepass_depth_tx_;
   scene_color_ptr_ = need_scene_color ? scene_color_tx_.gpu_texture() :
                                         dummy_color_tx_.gpu_texture();
@@ -842,6 +877,7 @@ void Instance::render_single_sample(Manager &manager,
   GPU_texture_copy(dst_depth, prepass_depth_tx_);
   render_passes.clear_sample_buffers();
   ssr.clear_gbuffer(ssr_active);
+  sss.clear_gbuffer();
 
   main_fb_.ensure(GPU_ATTACHMENT_TEXTURE(dst_depth), GPU_ATTACHMENT_TEXTURE(dst_color));
   main_fb_.bind();
@@ -857,6 +893,8 @@ void Instance::render_single_sample(Manager &manager,
       manager.submit(world_env_only_ps_, sample_view);
     }
   }
+
+  sss.resolve(manager, sample_view, dst_depth, dst_color, sample_index, render_extent_);
 
   if (ssr_active || need_scene_color) {
     ssr.build_color_pyramid(manager, dst_color, scene_color_tx_, render_extent_);
@@ -881,6 +919,17 @@ void Instance::render_single_sample(Manager &manager,
     main_fb_.bind();
     manager.submit(blend_ps_, sample_view);
   }
+
+  volume.render(manager, sample_view, dst_depth, dst_color, sample_index, render_extent_);
+  motion_blur.render(manager,
+                     sample_view,
+                     prev_persmat,
+                     next_persmat,
+                     dst_depth,
+                     dst_color,
+                     sample_index,
+                     render_extent_);
+  dof.render(manager, sample_view, dst_depth, dst_color, sample_index, total_samples, render_extent_);
 }
 
 void Instance::draw_to(Manager &manager, View &view, gpu::Texture *color, gpu::Texture *depth)
@@ -905,6 +954,14 @@ void Instance::draw_to(Manager &manager, View &view, gpu::Texture *color, gpu::T
   const bool gtao_active = lights.gtao_pass_needed();
   const bool need_scene_color = ssr_active || has_refract_draws_ || has_blend_refract_draws_;
 
+  const Object *cam_ob = camera_ob_ ?
+                             camera_ob_ :
+                             ((draw_ctx->v3d && draw_ctx->rv3d &&
+                               draw_ctx->rv3d->persp == RV3D_CAMOB) ?
+                                  draw_ctx->v3d->camera :
+                                  nullptr);
+  dof.sync(scene, cam_ob, render_extent_, base_overscan_winmat);
+
   prepass_depth_tx_.acquire_2d(render_extent_,
                                gpu::TextureFormat::SFLOAT_32_DEPTH,
                                GPU_TEXTURE_USAGE_SHADER_READ | GPU_TEXTURE_USAGE_ATTACHMENT);
@@ -916,7 +973,8 @@ void Instance::draw_to(Manager &manager, View &view, gpu::Texture *color, gpu::T
                               GPU_TEXTURE_USAGE_SHADER_READ | GPU_TEXTURE_USAGE_ATTACHMENT);
   sample_color_tx_.acquire_2d(render_extent_,
                               gpu::TextureFormat::SFLOAT_16_16_16_16,
-                              GPU_TEXTURE_USAGE_SHADER_READ | GPU_TEXTURE_USAGE_ATTACHMENT);
+                              GPU_TEXTURE_USAGE_SHADER_READ | GPU_TEXTURE_USAGE_SHADER_WRITE |
+                                  GPU_TEXTURE_USAGE_ATTACHMENT);
 
   render_passes.acquire_buffers(output_extent_, render_extent_);
 
@@ -951,6 +1009,7 @@ void Instance::draw_to(Manager &manager, View &view, gpu::Texture *color, gpu::T
     prepass_depth_ptr_ = dummy_depth_tx_;
     gtao_horizon_ptr_ = dummy_horizon_tx_;
     scene_color_ptr_ = dummy_color_tx_;
+    probes.set_sss_active(false);
     probes.capture_world_and_static_probes(manager,
                                            has_world_shader_ ? &world_capture_ps_ : nullptr,
                                            prepass_ps_,
@@ -961,6 +1020,7 @@ void Instance::draw_to(Manager &manager, View &view, gpu::Texture *color, gpu::T
                                            use_sky_,
                                            world_color_,
                                            true);
+    probes.set_sss_active(sss.enabled());
     prepass_depth_ptr_ = prepass_depth_tx_;
     scene_color_ptr_ = need_scene_color ? scene_color_tx_.gpu_texture() :
                                           dummy_color_tx_.gpu_texture();
@@ -978,15 +1038,29 @@ void Instance::draw_to(Manager &manager, View &view, gpu::Texture *color, gpu::T
         }
       }
     }
+    if (sample_override_ > 0) {
+      total_samples = sample_override_;
+    }
     total_samples = std::max(1, total_samples);
 
     if (total_samples == 1) {
+      const float4x4 prev_persmat = motion_blur.enabled() ?
+                                        (overscan_winmat(motion_blur.prev_winmat()) *
+                                         motion_blur.prev_viewmat()) :
+                                        base_persmat;
+      const float4x4 next_persmat = motion_blur.enabled() ?
+                                        (overscan_winmat(motion_blur.next_winmat()) *
+                                         motion_blur.next_viewmat()) :
+                                        base_persmat;
       sample_view_.sync(base_viewmat, base_overscan_winmat);
       render_single_sample(manager,
                            sample_view_,
                            sample_color_tx_,
                            sample_depth_tx_,
-                           0,
+                           sample_step_offset_,
+                           1,
+                           prev_persmat,
+                           next_persmat,
                            gtao_active,
                            ssr_active,
                            need_scene_color);
@@ -1007,14 +1081,38 @@ void Instance::draw_to(Manager &manager, View &view, gpu::Texture *color, gpu::T
       unf_sample_tx_ = sample_color_tx_;
 
       for (int s = 0; s < total_samples; s++) {
-        const float2 jitter = sampling_.pixel_jitter_get(s, filter_size);
-        sample_view_.sync(base_viewmat,
-                          Sampling::jittered_winmat(base_overscan_winmat, render_extent_, jitter));
+        const int eff_idx = sample_step_offset_ + s;
+        const float2 jitter = sampling_.pixel_jitter_get(eff_idx, filter_size);
+        float4x4 sample_viewmat = base_viewmat;
+        float4x4 sample_winmat = Sampling::jittered_winmat(
+            base_overscan_winmat, render_extent_, jitter);
+        dof.jitter_camera(eff_idx, total_samples, sample_viewmat, sample_winmat);
+        sample_view_.sync(sample_viewmat, sample_winmat);
+
+        float4x4 prev_persmat = base_persmat;
+        float4x4 next_persmat = base_persmat;
+        if (motion_blur.enabled()) {
+          float4x4 prev_vm = motion_blur.prev_viewmat();
+          float4x4 prev_wm = Sampling::jittered_winmat(
+              overscan_winmat(motion_blur.prev_winmat()), render_extent_, jitter);
+          dof.jitter_camera(eff_idx, total_samples, prev_vm, prev_wm);
+          prev_persmat = prev_wm * prev_vm;
+
+          float4x4 next_vm = motion_blur.next_viewmat();
+          float4x4 next_wm = Sampling::jittered_winmat(
+              overscan_winmat(motion_blur.next_winmat()), render_extent_, jitter);
+          dof.jitter_camera(eff_idx, total_samples, next_vm, next_wm);
+          next_persmat = next_wm * next_vm;
+        }
+
         render_single_sample(manager,
                              sample_view_,
                              sample_color_tx_,
                              sample_depth_tx_,
-                             s,
+                             eff_idx,
+                             total_samples,
+                             prev_persmat,
+                             next_persmat,
                              gtao_active,
                              ssr_active,
                              need_scene_color);
@@ -1044,6 +1142,7 @@ void Instance::draw_to(Manager &manager, View &view, gpu::Texture *color, gpu::T
     prepass_depth_ptr_ = dummy_depth_tx_;
     gtao_horizon_ptr_ = dummy_horizon_tx_;
     scene_color_ptr_ = dummy_color_tx_;
+    probes.set_sss_active(false);
     probes.capture_world_and_static_probes(manager,
                                            has_world_shader_ ? &world_capture_ps_ : nullptr,
                                            prepass_ps_,
@@ -1054,6 +1153,7 @@ void Instance::draw_to(Manager &manager, View &view, gpu::Texture *color, gpu::T
                                            use_sky_,
                                            world_color_,
                                            scene_updated || !taa_history_valid_);
+    probes.set_sss_active(sss.enabled());
     prepass_depth_ptr_ = prepass_depth_tx_;
     scene_color_ptr_ = need_scene_color ? scene_color_tx_.gpu_texture() :
                                           dummy_color_tx_.gpu_texture();
@@ -1070,6 +1170,9 @@ void Instance::draw_to(Manager &manager, View &view, gpu::Texture *color, gpu::T
                            sample_color_tx_,
                            sample_depth_tx_,
                            0,
+                           1,
+                           base_persmat,
+                           base_persmat,
                            gtao_active,
                            ssr_active,
                            need_scene_color);
@@ -1098,13 +1201,19 @@ void Instance::draw_to(Manager &manager, View &view, gpu::Texture *color, gpu::T
       }
 
       const float2 jitter = sampling_.pixel_jitter_get(taa_sample_index_, filter_size);
-      sample_view_.sync(base_viewmat,
-                        Sampling::jittered_winmat(base_overscan_winmat, render_extent_, jitter));
+      const int dof_total = (target_samples > 0) ? target_samples : 16;
+      float4x4 vp_viewmat = base_viewmat;
+      float4x4 vp_winmat = Sampling::jittered_winmat(base_overscan_winmat, render_extent_, jitter);
+      dof.jitter_camera(taa_sample_index_, dof_total, vp_viewmat, vp_winmat);
+      sample_view_.sync(vp_viewmat, vp_winmat);
       render_single_sample(manager,
                            sample_view_,
                            sample_color_tx_,
                            sample_depth_tx_,
                            taa_sample_index_,
+                           dof_total,
+                           base_persmat,
+                           base_persmat,
                            gtao_active,
                            ssr_active,
                            need_scene_color);

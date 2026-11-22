@@ -224,6 +224,11 @@ void ProbeModule::begin_sync(const Scene *scene,
       firefly, indirect_intensity_, indirect_clamp_, float(GOO_ENV_MIPS));
   probe_buf_.lookdev_params = float4(
       bg_opacity, bg_blur_lod, is_lookdev_bg ? 1.0f : 0.0f, has_world_ibl_ ? 1.0f : 0.0f);
+  probe_buf_.sss_params = float4(
+      float(scene ? std::clamp(scene->eevee.sss_samples, 1, 32) : 7),
+      scene ? std::clamp(scene->eevee.sss_jitter_threshold, 0.0f, 1.0f) : 0.3f,
+      0.0f,
+      0.0f);
   probe_buf_.sphere_probe_count = 0;
   probe_buf_.planar_probe_count = 0;
   probe_buf_.volume_probe_count = 0;

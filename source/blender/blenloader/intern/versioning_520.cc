@@ -957,6 +957,14 @@ void blo_do_versions_520(FileData *fd, Library * /*lib*/, Main *bmain)
       scene.eevee.flag &= ~SCE_EEVEE_SSR_REFRACTION;
     }
   }
+  if (!DNA_struct_member_exists_with_alias(fd->filesdna, "SceneEEVEE", "int", "sss_samples")) {
+    for (Scene &scene : bmain->scenes) {
+      scene.eevee.sss_samples = 7;
+      scene.eevee.sss_jitter_threshold = 0.3f;
+      scene.eevee.bokeh_denoise_fac = 0.75f;
+      scene.eevee.flag |= SCE_EEVEE_VOLUMETRIC_LIGHTS;
+    }
+  }
   if (!DNA_struct_member_exists_with_alias(fd->filesdna, "Light", "float", "contact_dist")) {
     for (Light &light : bmain->lights) {
       light.contact_dist = 0.2f;

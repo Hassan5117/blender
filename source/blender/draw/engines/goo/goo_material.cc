@@ -39,6 +39,8 @@ enum eGooMaterialVariant : uint64_t {
   GOO_MAT_SURFACE_CURVES = 1 << 4,
   GOO_MAT_PREPASS_CURVES = 1 << 5,
   GOO_MAT_SHADOW_CURVES = 1 << 6,
+  GOO_MAT_VOLUME_WORLD = 1 << 7,
+  GOO_MAT_VOLUME_OBJECT = 1 << 8,
 };
 
 namespace {
@@ -153,6 +155,9 @@ static void codegen_callback(void * /*thunk*/, GPUMaterial *gpumat, GPUCodegenOu
   ShaderCreateInfo &info = *reinterpret_cast<ShaderCreateInfo *>(codegen.create_info);
   const uint64_t uuid = GPU_material_uuid_get(gpumat);
   const bool is_world = (uuid & GOO_MAT_WORLD) != 0;
+  const bool is_volume_world = (uuid & GOO_MAT_VOLUME_WORLD) != 0;
+  const bool is_volume_object = (uuid & GOO_MAT_VOLUME_OBJECT) != 0;
+  const bool is_volume = is_volume_world || is_volume_object;
   const bool is_curves = (uuid & (GOO_MAT_SURFACE_CURVES | GOO_MAT_PREPASS_CURVES |
                                    GOO_MAT_SHADOW_CURVES)) != 0;
   const bool is_prepass = (uuid & (GOO_MAT_PREPASS_MESH | GOO_MAT_PREPASS_CURVES)) != 0;
@@ -160,7 +165,9 @@ static void codegen_callback(void * /*thunk*/, GPUMaterial *gpumat, GPUCodegenOu
 
   /* WORKAROUND (same as EEVEE): object attributes come from the draw manager SSBO. */
   if (GPU_material_uniform_attributes(gpumat) != nullptr) {
-    info.additional_info("draw_object_attributes");
+    if (!is_volume) {
+      info.additional_info("draw_object_attributes");
+    }
     for (auto &resource_info : info.batch_resources_) {
       if (resource_info.bind_type == ShaderCreateInfo::Resource::BindType::UNIFORM_BUFFER &&
           resource_info.uniformbuf.name == GPU_ATTRIBUTE_UBO_BLOCK_NAME "[512]")
@@ -176,7 +183,11 @@ static void codegen_callback(void * /*thunk*/, GPUMaterial *gpumat, GPUCodegenOu
   auto vertex_inputs = info.vertex_inputs_;
   info.vertex_inputs_.clear();
 
-  if (is_world) {
+  if (is_volume) {
+    info.additional_info(is_volume_world ? "goo_material_volume_world" :
+                                           "goo_material_volume_object");
+  }
+  else if (is_world) {
     info.define("MAT_GEOM_WORLD");
     info.additional_info("goo_material_world");
     info.early_fragment_test(true);
@@ -230,7 +241,7 @@ static void codegen_callback(void * /*thunk*/, GPUMaterial *gpumat, GPUCodegenOu
   if (GPU_material_flag_get(gpumat, GPU_MATFLAG_COAT)) {
     info.define("MAT_CLEARCOAT");
   }
-  if (GPU_material_flag_get(gpumat, GPU_MATFLAG_BARYCENTRIC) && !is_world) {
+  if (GPU_material_flag_get(gpumat, GPU_MATFLAG_BARYCENTRIC) && !is_world && !is_volume) {
     info.define("USE_BARYCENTRICS");
     if (!is_curves) {
       info.builtins(BuiltinBits::BARYCENTRIC_COORD);
@@ -241,7 +252,38 @@ static void codegen_callback(void * /*thunk*/, GPUMaterial *gpumat, GPUCodegenOu
   slots.reserve_slots(info);
 
   std::stringstream global_vars;
-  if (is_world) {
+  std::stringstream vol_attr_init;
+  if (is_volume) {
+    ListBaseT<GPUMaterialAttribute> attrs = GPU_material_attributes(gpumat);
+    for (auto &vert_in : vertex_inputs) {
+      bool default_one = false;
+      for (const GPUMaterialAttribute *attr = static_cast<const GPUMaterialAttribute *>(
+               attrs.first);
+           attr != nullptr;
+           attr = attr->next)
+      {
+        if (STREQ(attr->input_name, vert_in.name.c_str())) {
+          default_one = (attr->default_value == GPU_DEFAULT_1);
+          break;
+        }
+      }
+      global_vars << vert_in.type << " " << vert_in.name << ";\n";
+      vol_attr_init << "  " << vert_in.name << " = " << vert_in.type
+                    << (default_one ? "(1.0f);\n" : "(0.0f);\n");
+    }
+    vertex_inputs.clear();
+    if (!info.vertex_out_interfaces_.is_empty()) {
+      const StageInterfaceInfo &iface = *info.vertex_out_interfaces_.first();
+      global_vars << "struct " << iface.name << " {\n";
+      for (const auto &inout : iface.inouts) {
+        global_vars << "  " << inout.type << " " << inout.name << ";\n";
+      }
+      global_vars << "};\n";
+      global_vars << iface.name << " " << iface.instance_name << ";\n";
+      info.vertex_out_interfaces_.clear();
+    }
+  }
+  else if (is_world) {
     for (auto &vert_in : vertex_inputs) {
       global_vars << vert_in.type << " " << vert_in.name << ";\n";
     }
@@ -288,6 +330,7 @@ static void codegen_callback(void * /*thunk*/, GPUMaterial *gpumat, GPUCodegenOu
 
   std::stringstream attr_load;
   attr_load << "{\n";
+  attr_load << vol_attr_init.str();
   attr_load << (!codegen.attr_load.empty() ? codegen.attr_load : "");
   attr_load << "}\n\n";
 
@@ -302,7 +345,9 @@ static void codegen_callback(void * /*thunk*/, GPUMaterial *gpumat, GPUCodegenOu
     res.info_name = "goo_node_tree";
   }
 
-  std::string generated_resource_header = info.typedef_source_generated;
+  std::string generated_resource_header =
+      "#ifndef GOO_NODETREE_TYPE_LIB_GUARD\n#define GOO_NODETREE_TYPE_LIB_GUARD\n";
+  generated_resource_header += info.typedef_source_generated;
   generated_resource_header += "#ifdef CREATE_INFO_RES_PASS_goo_node_tree\n";
   generated_resource_header += "CREATE_INFO_RES_PASS_goo_node_tree\n";
   generated_resource_header += "#endif\n";
@@ -311,11 +356,11 @@ static void codegen_callback(void * /*thunk*/, GPUMaterial *gpumat, GPUCodegenOu
   generated_resource_header += "#endif\n";
   generated_resource_header += "#ifdef CREATE_INFO_RES_GEOMETRY_goo_node_tree\n";
   generated_resource_header += "CREATE_INFO_RES_GEOMETRY_goo_node_tree\n";
-  generated_resource_header += "#endif\n\n";
+  generated_resource_header += "#endif\n#endif\n\n";
   info.generated_sources.append({"goo_nodetree_type_lib.glsl", {}, generated_resource_header});
 
   /* Vertex stage: attribute loading + (optional) displacement for meshes & curves. */
-  if (!is_world) {
+  if (!is_world && !is_volume) {
     std::stringstream vert_gen;
     if (is_curves) {
       vert_gen << global_vars.str();
@@ -346,42 +391,65 @@ static void codegen_callback(void * /*thunk*/, GPUMaterial *gpumat, GPUCodegenOu
     info.generated_sources.append({"goo_nodetree_vert_lib.glsl", dependencies, vert_gen.str()});
   }
 
-  /* Fragment stage: node-tree surface evaluation. */
+  /* Fragment stage: node-tree surface or volume evaluation. */
   {
     std::stringstream frag_gen;
     Vector<StringRefNull> dependencies;
 
-    if (is_world) {
-      dependencies.append("goo_attributes_world_lib.glsl");
-      dependencies.append("goo_nodetree_lib.glsl");
+    if (is_volume) {
+      dependencies.append("goo_geom_types_lib.glsl");
+      dependencies.append("goo_attributes_volume_lib.glsl");
+      dependencies.append("goo_volume_nodetree_lib.glsl");
       frag_gen << global_vars.str();
-      frag_gen << "void attrib_load(WorldPoint domain)" << attr_load.str();
+      frag_gen << "void attrib_load(VolumePoint domain)" << attr_load.str();
+
+      for (const auto &graph : codegen.material_functions) {
+        frag_gen << graph.serialized;
+        dependencies.extend(graph.dependencies);
+      }
+
+      frag_gen << "Closure nodetree_volume()\n{\n";
+      frag_gen << "  closure_weights_reset(0.0);\n";
+      frag_gen << codegen.volume.serialized_or_default("return Closure(0);\n");
+      dependencies.extend(codegen.volume.dependencies);
+      frag_gen << "}\n\n";
+
+      info.generated_sources.append(
+          {"goo_vol_nodetree_frag_lib.glsl", dependencies, frag_gen.str()});
     }
     else {
-      dependencies.append("goo_nodetree_lib.glsl");
-    }
+      if (is_world) {
+        dependencies.append("goo_attributes_world_lib.glsl");
+        dependencies.append("goo_nodetree_lib.glsl");
+        frag_gen << global_vars.str();
+        frag_gen << "void attrib_load(WorldPoint domain)" << attr_load.str();
+      }
+      else {
+        dependencies.append("goo_nodetree_lib.glsl");
+      }
 
-    for (const auto &graph : codegen.material_functions) {
-      frag_gen << graph.serialized;
-      dependencies.extend(graph.dependencies);
-    }
+      for (const auto &graph : codegen.material_functions) {
+        frag_gen << graph.serialized;
+        dependencies.extend(graph.dependencies);
+      }
 
-    if (!codegen.displacement.empty() && !is_world) {
-      /* Bump displacement. Needed to recompute normals after displacement. */
-      info.define("MAT_DISPLACEMENT_BUMP");
-      frag_gen << "float3 nodetree_displacement()\n{\n";
-      frag_gen << codegen.displacement.serialized;
-      dependencies.extend(codegen.displacement.dependencies);
+      if (!codegen.displacement.empty() && !is_world) {
+        /* Bump displacement. Needed to recompute normals after displacement. */
+        info.define("MAT_DISPLACEMENT_BUMP");
+        frag_gen << "float3 nodetree_displacement()\n{\n";
+        frag_gen << codegen.displacement.serialized;
+        dependencies.extend(codegen.displacement.dependencies);
+        frag_gen << "}\n\n";
+      }
+
+      frag_gen << "Closure nodetree_surface(float closure_rand)\n{\n";
+      frag_gen << "  closure_weights_reset(closure_rand);\n";
+      frag_gen << codegen.surface.serialized_or_default("return Closure(0);\n");
+      dependencies.extend(codegen.surface.dependencies);
       frag_gen << "}\n\n";
+
+      info.generated_sources.append({"goo_nodetree_frag_lib.glsl", dependencies, frag_gen.str()});
     }
-
-    frag_gen << "Closure nodetree_surface(float closure_rand)\n{\n";
-    frag_gen << "  closure_weights_reset(closure_rand);\n";
-    frag_gen << codegen.surface.serialized_or_default("return Closure(0);\n");
-    dependencies.extend(codegen.surface.dependencies);
-    frag_gen << "}\n\n";
-
-    info.generated_sources.append({"goo_nodetree_frag_lib.glsl", dependencies, frag_gen.str()});
   }
 }
 
@@ -491,6 +559,50 @@ GPUMaterial *MaterialModule::curves_prepass_get(Material *ma, bool deferred_comp
 GPUMaterial *MaterialModule::curves_shadow_get(Material *ma, bool deferred_compilation)
 {
   return material_variant_get(ma, GOO_MAT_SHADOW_CURVES, deferred_compilation, queued_count);
+}
+
+GPUMaterial *MaterialModule::world_volume_get(World *wo, bool deferred_compilation)
+{
+  if (wo == nullptr || wo->nodetree == nullptr) {
+    return nullptr;
+  }
+
+  GPUMaterialFromNodeTreeResult result = GPU_material_from_nodetree(nullptr,
+                                                                    wo->nodetree,
+                                                                    &wo->gpumaterial,
+                                                                    wo->id.name,
+                                                                    GPU_MAT_GOO,
+                                                                    GOO_MAT_VOLUME_WORLD,
+                                                                    deferred_compilation,
+                                                                    codegen_callback,
+                                                                    nullptr);
+  GPUMaterial *gpumat = result.material;
+  if (gpumat == nullptr) {
+    return nullptr;
+  }
+  switch (GPU_material_status(gpumat)) {
+    case GPU_MAT_SUCCESS:
+      return GPU_material_has_volume_output(gpumat) ? gpumat : nullptr;
+    case GPU_MAT_QUEUED:
+      queued_count++;
+      return nullptr;
+    case GPU_MAT_FAILED:
+    default:
+      return nullptr;
+  }
+}
+
+GPUMaterial *MaterialModule::object_volume_get(Material *ma, bool deferred_compilation)
+{
+  if (ma == nullptr || ma->nodetree == nullptr) {
+    return nullptr;
+  }
+  GPUMaterial *gpumat = material_variant_get(
+      ma, GOO_MAT_VOLUME_OBJECT, deferred_compilation, queued_count);
+  if (gpumat != nullptr && !GPU_material_has_volume_output(gpumat)) {
+    return nullptr;
+  }
+  return gpumat;
 }
 
 }  // namespace blender::goo

@@ -14,6 +14,11 @@
 
 #include "BLI_math_matrix_types.hh"
 #include "BLI_math_vector_types.hh"
+#include "BLI_vector.hh"
+
+namespace blender {
+struct CurveMapping;
+}
 
 namespace blender::goo {
 
@@ -33,6 +38,9 @@ class Sampling {
   static float4x4 jittered_winmat(const float4x4 &base_winmat,
                                   int2 render_extent,
                                   float2 pixel_jitter);
+
+  static void cdf_from_curvemapping(const CurveMapping &curve, Vector<float> &cdf);
+  static void cdf_invert(const Vector<float> &cdf, Vector<float> &inverted_cdf);
 
  private:
   static const std::array<float, FILTER_CDF_TABLE_SIZE> &inverted_cdf_table();

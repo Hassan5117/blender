@@ -2612,7 +2612,8 @@ struct RaytraceEEVEE {
 /** #SceneEEVEE::flag */
 enum eSceneEEVEE_Flag : int {
   // SCE_EEVEE_VOLUMETRIC_ENABLED = (1 << 0), /* Unused */
-  // SCE_EEVEE_VOLUMETRIC_LIGHTS = (1 << 1), /* Unused. */
+  SCE_EEVEE_VOLUMETRIC_LIGHTS = (1 << 1),
+  /* Goo Engine: restored (same bit as Goo 4.x / EEVEE Legacy, for file compatibility). */
   SCE_EEVEE_VOLUMETRIC_SHADOWS = (1 << 2),
   //  SCE_EEVEE_VOLUMETRIC_COLORED    = (1 << 3), /* Unused */
   SCE_EEVEE_GTAO_ENABLED = (1 << 4),
@@ -2636,7 +2637,8 @@ enum eSceneEEVEE_Flag : int {
   SCE_EEVEE_GI_AUTOBAKE = (1 << 19),
   // SCE_EEVEE_SHADOW_SOFT = (1 << 20), /* Unused. */
   SCE_EEVEE_OVERSCAN = (1 << 21),
-  // SCE_EEVEE_DOF_HQ_SLIGHT_FOCUS = (1 << 22), /* Unused. */
+  SCE_EEVEE_DOF_HQ_SLIGHT_FOCUS = (1 << 22),
+  /* Goo Engine: restored (same bit as Goo 4.x / EEVEE Legacy, for file compatibility). */
   SCE_EEVEE_DOF_JITTER = (1 << 23),
   SCE_EEVEE_SHADOW_ENABLED = (1 << 24),
   SCE_EEVEE_RAYTRACE_OPTIONS_SPLIT = (1 << 25),
@@ -2656,7 +2658,7 @@ struct SceneEEVEE {
 
   eSceneEEVEE_Flag flag = SCE_EEVEE_TAA_REPROJECTION | SCE_EEVEE_SHADOW_ENABLED |
                           SCE_EEVEE_GTAO_BENT_NORMALS | SCE_EEVEE_GTAO_BOUNCE |
-                          SCE_EEVEE_SSR_HALF_RESOLUTION;
+                          SCE_EEVEE_SSR_HALF_RESOLUTION | SCE_EEVEE_VOLUMETRIC_LIGHTS;
   int gi_diffuse_bounces = 3;
   int gi_cubemap_resolution = 512;
   int gi_visibility_resolution = 32;
@@ -2742,7 +2744,11 @@ struct SceneEEVEE {
   float ssr_thickness = 0.2f;
   float ssr_border_fade = 0.075f;
   float ssr_firefly_fac = 10.0f;
-  float _pad2 = 0.0f;
+
+  /* Goo Engine: SSS & DOF settings (names match Goo 4.x / EEVEE Legacy for file compatibility). */
+  int sss_samples = 7;
+  float sss_jitter_threshold = 0.3f;
+  float bokeh_denoise_fac = 0.75f;
 };
 
 struct SceneGpencil {

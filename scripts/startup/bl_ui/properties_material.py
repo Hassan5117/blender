@@ -181,7 +181,7 @@ class EEVEE_MATERIAL_PT_volume(MaterialButtonsPanel, Panel):
     bl_translation_context = i18n_contexts.id_id
     bl_context = "material"
     bl_options = {'DEFAULT_CLOSED'}
-    COMPAT_ENGINES = {'BLENDER_EEVEE'}
+    COMPAT_ENGINES = {'BLENDER_EEVEE', 'GOO_ENGINE'}
 
     @classmethod
     def poll(cls, context):
@@ -203,7 +203,7 @@ class EEVEE_MATERIAL_PT_displacement(MaterialButtonsPanel, Panel):
     bl_label = "Displacement"
     bl_context = "material"
     bl_options = {'DEFAULT_CLOSED'}
-    COMPAT_ENGINES = {'BLENDER_EEVEE'}
+    COMPAT_ENGINES = {'BLENDER_EEVEE', 'GOO_ENGINE'}
 
     @classmethod
     def poll(cls, context):
@@ -383,6 +383,7 @@ class GOO_MATERIAL_PT_settings(MaterialButtonsPanel, Panel):
         sub = layout.row()
         sub.active = mat.use_screen_refraction
         sub.prop(mat, "refraction_depth")
+        layout.prop(mat, "use_sss_translucency")
 
         layout.prop(mat, "displacement_method")
         layout.prop(mat, "pass_index")

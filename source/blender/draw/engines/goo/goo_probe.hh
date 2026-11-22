@@ -179,6 +179,12 @@ class ProbeModule {
     probes_dirty_ = true;
   }
 
+  void set_sss_active(bool active)
+  {
+    probe_buf_.sss_params.z = active ? 1.0f : 0.0f;
+    probe_buf_.push_update();
+  }
+
   template<typename PassType> void bind_ubo(PassType &pass)
   {
     pass.bind_ubo(GOO_PROBE_UBO_SLOT, probe_buf_);

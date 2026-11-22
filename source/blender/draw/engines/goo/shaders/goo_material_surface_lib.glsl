@@ -23,9 +23,32 @@ float4 goo_surface_frag_exec()
   }
 
   float holdout = saturate(g_holdout);
-  float alpha = saturate(1.0f - reduce_add(g_goo_transmittance) * (1.0f / 3.0f)) *
-                (1.0f - holdout);
-  float3 final_radiance = g_goo_radiance * (1.0f - holdout);
+  float vis = 1.0f - holdout;
+  float alpha = saturate(1.0f - reduce_add(g_goo_transmittance) * (1.0f / 3.0f)) * vis;
+  float3 final_radiance = g_goo_radiance * vis;
+
+#ifdef GOO_SSS_WRITE
+  if ((goo_probe_buf.capture_flags & GOO_CAPTURE_NO_SSR) == 0 &&
+      (goo_material_flags & (GOO_MAT_FLAG_NO_PASS_WRITE | GOO_MAT_FLAG_IS_REFRACT_PASS)) == 0 &&
+      goo_probe_buf.sss_params.z > 0.5f)
+  {
+    int2 sss_texel = int2(gl_FragCoord.xy);
+    if (g_goo_sss_weight > 1e-6f && vis > 1e-4f) {
+      final_radiance = max(final_radiance - g_goo_sss_direct_radiance * vis, float3(0.0f));
+      float inv_w = 1.0f / max(g_goo_sss_weight, 1e-5f);
+      float3 sss_alb = clamp(g_goo_sss_albedo * inv_w, float3(0.0f), float3(10.0f));
+      float3 sss_rad = max(g_goo_sss_radius * inv_w, float3(0.0f));
+      float obj_id = float((drw_resource_id() & 1023u) + 1u);
+      imageStoreFast(
+          goo_sss_data_img, int3(sss_texel, 0), float4(g_goo_sss_irrad * vis, 1.0f));
+      imageStoreFast(goo_sss_data_img, int3(sss_texel, 1), float4(sss_alb, obj_id));
+      imageStoreFast(goo_sss_data_img, int3(sss_texel, 2), float4(sss_rad, 1.0f));
+    }
+    else {
+      imageStoreFast(goo_sss_data_img, int3(sss_texel, 0), float4(0.0f));
+    }
+  }
+#endif
 
   float4 color_out;
   if ((goo_material_flags & GOO_MAT_FLAG_ALPHA_CLIP) != 0) {

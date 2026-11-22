@@ -6,14 +6,25 @@
  * \ingroup draw_engine
  */
 
+#include <algorithm>
+#include <cmath>
+#include <cstring>
+
+#include "BKE_colortools.hh"
 #include "BKE_report.hh"
 
+#include "BLI_math_base.hh"
 #include "BLI_math_matrix.hh"
 #include "BLI_rect.h"
+#include "BLI_vector.hh"
 
 #include "BLT_translation.hh"
 
 #include "DEG_depsgraph_query.hh"
+
+#include "DNA_color_types.h"
+#include "DNA_layer_types.h"
+#include "DNA_scene_types.h"
 
 #include "GPU_framebuffer.hh"
 #include "GPU_texture.hh"
@@ -30,6 +41,7 @@
 
 #include "goo_engine.h" /* Own include. */
 #include "goo_instance.hh"
+#include "goo_sampling.hh"
 #include "goo_shader.hh"
 
 namespace blender {
@@ -178,53 +190,211 @@ static void render(RenderEngine *engine, Depsgraph *depsgraph)
       return;
     }
 
-    Object *camera_ob = DEG_get_evaluated(depsgraph, RE_GetCamera(re_ptr));
+    const Scene *scene = draw_ctx->scene;
+    const ViewLayer *vl = draw_ctx->view_layer;
+    const int initial_frame = scene ? scene->r.cfra : 1;
+    const float initial_subframe = scene ? scene->r.subframe : 0.0f;
 
-    float4x4 winmat, viewinv;
-    RE_GetCameraWindow(re_ptr, camera_ob, winmat.ptr());
-    RE_GetCameraModelMatrix(re_ptr, camera_ob, viewinv.ptr());
-    const float4x4 viewmat = math::invert(viewinv);
-
-    DRW_cache_restart();
-    draw::View::default_set(viewmat, winmat);
-
-    delete instance;
-    instance = new Instance();
-    instance->init();
-
-    draw::Manager &manager = *DRW_manager_get();
-    manager.begin_sync();
-    instance->begin_sync();
-    DRW_render_object_iter(
-        eng,
-        depsgraph,
-        [&](draw::ObjectRef &ob_ref, RenderEngine * /*engine*/, Depsgraph * /*depsgraph*/) {
-          instance->object_sync(ob_ref, manager);
-        });
-    instance->end_sync();
-    manager.end_sync();
-
-    DRW_submission_start();
-    DefaultTextureList *dtxl = draw_ctx->viewport_texture_list_get();
-    DefaultFramebufferList *dfbl = draw_ctx->viewport_framebuffer_list_get();
-    instance->draw_to(manager, draw::View::default_get(), dtxl->color, dtxl->depth);
-    DRW_submission_end();
+    const bool mblur_enabled = (scene != nullptr) && ((scene->r.mode & R_MBLUR) != 0) &&
+                               (vl == nullptr || (vl->layflag & SCE_LAY_MOTION_BLUR) != 0) &&
+                               (scene->r.motion_blur_shutter > 1e-5f);
 
     const char *viewname = RE_GetActiveRenderView(re_ptr);
     RenderPass *rp = RE_pass_find_by_name(layer, RE_PASSNAME_COMBINED, viewname);
-    if (rp) {
-      GPU_framebuffer_bind(dfbl->default_fb);
-      GPU_framebuffer_read_color(dfbl->default_fb,
-                                 rect.xmin,
-                                 rect.ymin,
-                                 BLI_rcti_size_x(&rect),
-                                 BLI_rcti_size_y(&rect),
-                                 4,
-                                 0,
-                                 GPU_DATA_FLOAT,
-                                 rp->ibuf->float_data_for_write());
+
+    if (!mblur_enabled) {
+      Object *camera_ob = DEG_get_evaluated(depsgraph, RE_GetCamera(re_ptr));
+
+      float4x4 winmat, viewinv;
+      RE_GetCameraWindow(re_ptr, camera_ob, winmat.ptr());
+      RE_GetCameraModelMatrix(re_ptr, camera_ob, viewinv.ptr());
+      const float4x4 viewmat = math::invert(viewinv);
+
+      DRW_cache_restart();
+      draw::View::default_set(viewmat, winmat);
+
+      delete instance;
+      instance = new Instance();
+      instance->set_camera_object(camera_ob);
+      instance->init();
+
+      draw::Manager &manager = *DRW_manager_get();
+      manager.begin_sync();
+      instance->begin_sync();
+      DRW_render_object_iter(
+          eng,
+          depsgraph,
+          [&](draw::ObjectRef &ob_ref, RenderEngine * /*engine*/, Depsgraph * /*depsgraph*/) {
+            instance->object_sync(ob_ref, manager);
+          });
+      instance->end_sync();
+      manager.end_sync();
+
+      DRW_submission_start();
+      DefaultTextureList *dtxl = draw_ctx->viewport_texture_list_get();
+      DefaultFramebufferList *dfbl = draw_ctx->viewport_framebuffer_list_get();
+      instance->draw_to(manager, draw::View::default_get(), dtxl->color, dtxl->depth);
+      DRW_submission_end();
+
+      if (rp) {
+        GPU_framebuffer_bind(dfbl->default_fb);
+        GPU_framebuffer_read_color(dfbl->default_fb,
+                                   rect.xmin,
+                                   rect.ymin,
+                                   BLI_rcti_size_x(&rect),
+                                   BLI_rcti_size_y(&rect),
+                                   4,
+                                   0,
+                                   GPU_DATA_FLOAT,
+                                   rp->ibuf->float_data_for_write());
+      }
+      instance->read_render_passes(layer, draw_ctx->view_layer, viewname, rect);
+      return;
     }
-    instance->read_render_passes(layer, draw_ctx->view_layer, viewname, rect);
+
+    const int steps = std::max(1, scene->eevee.motion_blur_steps);
+    Vector<float> time_steps(steps * 2 + 1);
+    {
+      Scene *scene_mut = const_cast<Scene *>(scene);
+      BKE_curvemapping_changed(&scene_mut->r.mblur_shutter_curve, false);
+      Vector<float> cdf(CM_TABLE);
+      Sampling::cdf_from_curvemapping(scene->r.mblur_shutter_curve, cdf);
+      Sampling::cdf_invert(cdf, time_steps);
+
+      const float base_time = float(initial_frame) + initial_subframe;
+      for (float &t : time_steps) {
+        switch (scene->r.motion_blur_position) {
+          case SCE_MB_START:
+            break;
+          case SCE_MB_CENTER:
+            t -= 0.5f;
+            break;
+          case SCE_MB_END:
+            t -= 1.0f;
+            break;
+        }
+        t = t * scene->r.motion_blur_shutter + base_time;
+      }
+    }
+
+    const uint vl_samples = vl ? vl->samples : 0u;
+    const int total_samples = std::max(1, (vl_samples > 0u) ? int(vl_samples) :
+                                                              scene->eevee.taa_render_samples);
+    const int samples_per_step = std::max(1, (total_samples + steps - 1) / steps);
+
+    auto capture_step = [&](float t) {
+      const float fl = std::floor(t);
+      DRW_render_set_time(eng, depsgraph, int(fl), t - fl);
+      DRW_cache_restart();
+
+      MotionBlurModule::StepData step;
+      Object *step_cam = DEG_get_evaluated(depsgraph, RE_GetCamera(re_ptr));
+      float4x4 step_viewinv = float4x4::identity();
+      RE_GetCameraWindow(re_ptr, step_cam, step.winmat.ptr());
+      RE_GetCameraModelMatrix(re_ptr, step_cam, step_viewinv.ptr());
+      step.viewmat = math::invert(step_viewinv);
+
+      DRW_render_object_iter(
+          eng,
+          depsgraph,
+          [&](draw::ObjectRef &ob_ref, RenderEngine * /*e*/, Depsgraph * /*d*/) {
+            if (ob_ref.object == nullptr) {
+              return;
+            }
+            const Object *orig = DEG_get_original(ob_ref.object);
+            step.orig_object_mats.add_overwrite(orig, ob_ref.object->object_to_world());
+            if (!ob_ref.is_range()) {
+              step.object_mats.add_overwrite(draw::ObjectKey(ob_ref), ob_ref.object->object_to_world());
+            }
+          });
+      return step;
+    };
+
+    const int w = BLI_rcti_size_x(&rect);
+    const int h = BLI_rcti_size_y(&rect);
+    const size_t float_count = size_t(w) * size_t(h) * 4;
+    Vector<float> accum(rp ? float_count : 0, 0.0f);
+    Vector<float> step_buf(rp ? float_count : 0, 0.0f);
+    const float inv_steps = 1.0f / float(steps);
+    const int mid_step = steps / 2;
+
+    MotionBlurModule::StepData carried_step = capture_step(time_steps[0]);
+
+    delete instance;
+    instance = new Instance();
+
+    for (int step_idx = 0; step_idx < steps; step_idx++) {
+      MotionBlurModule::StepData next_step = capture_step(time_steps[step_idx * 2 + 2]);
+      MotionBlurModule::StepData next_copy;
+      next_copy.viewmat = next_step.viewmat;
+      next_copy.winmat = next_step.winmat;
+      next_copy.object_mats = next_step.object_mats;
+      next_copy.orig_object_mats = next_step.orig_object_mats;
+
+      const float curr_t = time_steps[step_idx * 2 + 1];
+      const float curr_fl = std::floor(curr_t);
+      DRW_render_set_time(eng, depsgraph, int(curr_fl), curr_t - curr_fl);
+      DRW_cache_restart();
+
+      Object *camera_ob = DEG_get_evaluated(depsgraph, RE_GetCamera(re_ptr));
+      float4x4 winmat, viewinv;
+      RE_GetCameraWindow(re_ptr, camera_ob, winmat.ptr());
+      RE_GetCameraModelMatrix(re_ptr, camera_ob, viewinv.ptr());
+      const float4x4 viewmat = math::invert(viewinv);
+
+      draw::View::default_set(viewmat, winmat);
+
+      instance->set_camera_object(camera_ob);
+      instance->motion_blur.set_step_data(std::move(carried_step), std::move(next_step));
+      instance->set_sample_override(samples_per_step, step_idx * samples_per_step);
+      instance->init();
+
+      draw::Manager &manager = *DRW_manager_get();
+      manager.begin_sync();
+      instance->begin_sync();
+      DRW_render_object_iter(
+          eng,
+          depsgraph,
+          [&](draw::ObjectRef &ob_ref, RenderEngine * /*engine*/, Depsgraph * /*depsgraph*/) {
+            instance->object_sync(ob_ref, manager);
+          });
+      instance->end_sync();
+      manager.end_sync();
+
+      DRW_submission_start();
+      DefaultTextureList *dtxl = draw_ctx->viewport_texture_list_get();
+      DefaultFramebufferList *dfbl = draw_ctx->viewport_framebuffer_list_get();
+      instance->draw_to(manager, draw::View::default_get(), dtxl->color, dtxl->depth);
+      DRW_submission_end();
+
+      if (rp) {
+        GPU_framebuffer_bind(dfbl->default_fb);
+        GPU_framebuffer_read_color(dfbl->default_fb,
+                                   rect.xmin,
+                                   rect.ymin,
+                                   w,
+                                   h,
+                                   4,
+                                   0,
+                                   GPU_DATA_FLOAT,
+                                   step_buf.data());
+        for (size_t i = 0; i < float_count; i++) {
+          accum[i] += step_buf[i] * inv_steps;
+        }
+      }
+      if (step_idx == mid_step) {
+        instance->read_render_passes(layer, draw_ctx->view_layer, viewname, rect);
+      }
+
+      carried_step = std::move(next_copy);
+    }
+
+    if (rp && rp->ibuf && rp->ibuf->float_data_for_write()) {
+      std::memcpy(rp->ibuf->float_data_for_write(), accum.data(), float_count * sizeof(float));
+    }
+
+    DRW_render_set_time(eng, depsgraph, initial_frame, initial_subframe);
+    RE_engine_frame_set(eng, initial_frame, initial_subframe);
   };
 
   auto store_metadata_cb = [&](RenderResult *render_result) {

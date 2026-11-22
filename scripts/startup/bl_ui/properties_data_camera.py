@@ -253,6 +253,7 @@ class DATA_PT_camera_dof(CameraButtonsPanel, Panel):
     bl_options = {'DEFAULT_CLOSED'}
     COMPAT_ENGINES = {
         'BLENDER_EEVEE',
+        'GOO_ENGINE',
         'BLENDER_WORKBENCH',
     }
 
@@ -290,6 +291,7 @@ class DATA_PT_camera_dof_aperture(CameraButtonsPanel, Panel):
     bl_parent_id = "DATA_PT_camera_dof"
     COMPAT_ENGINES = {
         'BLENDER_EEVEE',
+        'GOO_ENGINE',
         'BLENDER_WORKBENCH',
     }
 
@@ -318,6 +320,7 @@ class DATA_PT_camera_background_image(CameraButtonsPanel, Panel):
     COMPAT_ENGINES = {
         'BLENDER_RENDER',
         'BLENDER_EEVEE',
+        'GOO_ENGINE',
         'BLENDER_WORKBENCH',
     }
 
@@ -431,6 +434,7 @@ class DATA_PT_camera_display(CameraButtonsPanel, Panel):
     COMPAT_ENGINES = {
         'BLENDER_RENDER',
         'BLENDER_EEVEE',
+        'GOO_ENGINE',
         'BLENDER_WORKBENCH',
     }
 
@@ -468,6 +472,7 @@ class DATA_PT_camera_display_composition_guides(CameraButtonsPanel, Panel):
     COMPAT_ENGINES = {
         'BLENDER_RENDER',
         'BLENDER_EEVEE',
+        'GOO_ENGINE',
         'BLENDER_WORKBENCH',
     }
 
