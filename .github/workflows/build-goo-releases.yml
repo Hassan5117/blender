@@ -37,6 +37,8 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             git-lfs \
             build-essential \
+            gcc-14 \
+            g++-14 \
             cmake \
             ninja-build \
             mold \
@@ -74,20 +76,29 @@ jobs:
 
       - name: Pull bundled LFS assets and precompiled lib/linux_x64
         run: |
+          set -euo pipefail
           git lfs install --skip-repo
           git config lfs.url https://projects.blender.org/blender/blender.git/info/lfs
-          git lfs pull --include="release/datafiles/assets/**"
+          git lfs pull --exclude="tests/**"
+          STARTUP_SIZE="$(wc -c < release/datafiles/startup.blend)"
+          echo "release/datafiles/startup.blend size: $STARTUP_SIZE bytes"
+          test "$STARTUP_SIZE" -gt 1024
           rm -rf .git/lfs
 
           git config --local submodule.lib/linux_x64.update checkout
           GIT_LFS_SKIP_SMUDGE=1 git submodule update --init --depth 1 --progress lib/linux_x64
           git -C lib/linux_x64 lfs pull
-          rm -rf lib/linux_x64/.git .git/modules/lib/linux_x64
+          if [ -d lib/linux_x64/.git/lfs ]; then rm -rf lib/linux_x64/.git/lfs; fi
+          rm -rf .git/modules/lib/linux_x64/lfs
+          test -e lib/linux_x64/.git
           df -h
 
       - name: Configure Linux Release build
         run: |
-          cmake -S . -B "$RUNNER_TEMP/build-linux" -G Ninja \
+          set -o pipefail
+          if ! cmake -S . -B "$RUNNER_TEMP/build-linux" -G Ninja \
+            -DCMAKE_C_COMPILER=gcc-14 \
+            -DCMAKE_CXX_COMPILER=g++-14 \
             -C build_files/cmake/config/blender_release.cmake \
             -DCMAKE_BUILD_TYPE=Release \
             -DWITH_LINKER_MOLD=ON \
@@ -100,17 +111,27 @@ jobs:
             -DWITH_CYCLES_DEVICE_OPTIX=OFF \
             -DWITH_CYCLES_DEVICE_HIPRT=OFF \
             -DWITH_CYCLES_DEVICE_ONEAPI=OFF \
-            -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/pkg/blender-${{ env.ARCHIVE_VERSION }}-linux-x64"
+            -DCMAKE_INSTALL_PREFIX="$RUNNER_TEMP/pkg/blender-${{ env.ARCHIVE_VERSION }}-linux-x64" 2>&1 | tee "$RUNNER_TEMP/cmake-linux.log"; then
+            MSG="$(tail -n 25 "$RUNNER_TEMP/cmake-linux.log" | python3 -c 'import sys; s=sys.stdin.read()[-3500:]; print(s.replace("%","%25").replace("\r","%0D").replace("\n","%0A"), end="")')"
+            echo "::error title=Configure Linux Release build::$MSG"
+            exit 1
+          fi
 
       - name: Build & install Linux Release
         run: |
-          ninja -C "$RUNNER_TEMP/build-linux" install
+          set -o pipefail
+          if ! ninja -C "$RUNNER_TEMP/build-linux" install 2>&1 | tee "$RUNNER_TEMP/build-linux.log"; then
+            MSG="$(tail -n 30 "$RUNNER_TEMP/build-linux.log" | python3 -c 'import sys; s=sys.stdin.read()[-3500:]; print(s.replace("%","%25").replace("\r","%0D").replace("\n","%0A"), end="")')"
+            echo "::error title=Build Linux Release::$MSG"
+            exit 1
+          fi
           rm -rf "$RUNNER_TEMP/build-linux"
           rm -rf lib/linux_x64
           df -h
 
       - name: Verify headless OpenGL (Mesa llvmpipe)
         run: |
+          set -o pipefail
           BLENDER_BIN="$RUNNER_TEMP/pkg/blender-${{ env.ARCHIVE_VERSION }}-linux-x64/blender"
           VER_OUT="$("$BLENDER_BIN" --version)"
           echo "$VER_OUT"
@@ -118,28 +139,37 @@ jobs:
 
           mkdir -p "$RUNNER_TEMP/qa-renders/opengl"
           LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a -s "-screen 0 1280x720x24" glxinfo -B || true
-          GOO_CI_SOFTWARE_GPU=1 \
+          if ! GOO_CI_SOFTWARE_GPU=1 \
             GOO_TEST_OUT_DIR="$RUNNER_TEMP/qa-renders/opengl" \
             LIBGL_ALWAYS_SOFTWARE=1 \
             xvfb-run -a -s "-screen 0 1280x720x24" \
             "$BLENDER_BIN" --background --factory-startup --gpu-backend opengl \
-            --python-exit-code 1 --python "$GITHUB_WORKSPACE/tests/python/goo_engine_ci_test.py"
+            --python-exit-code 1 --python "$GITHUB_WORKSPACE/tests/python/goo_engine_ci_test.py" 2>&1 | tee "$RUNNER_TEMP/qa-opengl.log"; then
+            MSG="$(tail -n 30 "$RUNNER_TEMP/qa-opengl.log" | python3 -c 'import sys; s=sys.stdin.read()[-3500:]; print(s.replace("%","%25").replace("\r","%0D").replace("\n","%0A"), end="")')"
+            echo "::error title=Verify headless OpenGL::$MSG"
+            exit 1
+          fi
 
       - name: Verify headless Vulkan (Mesa lavapipe)
         run: |
+          set -o pipefail
           BLENDER_BIN="$RUNNER_TEMP/pkg/blender-${{ env.ARCHIVE_VERSION }}-linux-x64/blender"
           LVP_ICD="$(ls /usr/share/vulkan/icd.d/lvp_icd*.json | head -n 1)"
           echo "Using Lavapipe ICD: $LVP_ICD"
           VK_ICD_FILENAMES="$LVP_ICD" VK_DRIVER_FILES="$LVP_ICD" vulkaninfo --summary || true
 
           mkdir -p "$RUNNER_TEMP/qa-renders/vulkan"
-          GOO_CI_SOFTWARE_GPU=1 \
+          if ! GOO_CI_SOFTWARE_GPU=1 \
             GOO_TEST_OUT_DIR="$RUNNER_TEMP/qa-renders/vulkan" \
             VK_ICD_FILENAMES="$LVP_ICD" \
             VK_DRIVER_FILES="$LVP_ICD" \
             xvfb-run -a -s "-screen 0 1280x720x24" \
             "$BLENDER_BIN" --background --factory-startup --gpu-backend vulkan \
-            --python-exit-code 1 --python "$GITHUB_WORKSPACE/tests/python/goo_engine_ci_test.py"
+            --python-exit-code 1 --python "$GITHUB_WORKSPACE/tests/python/goo_engine_ci_test.py" 2>&1 | tee "$RUNNER_TEMP/qa-vulkan.log"; then
+            MSG="$(tail -n 30 "$RUNNER_TEMP/qa-vulkan.log" | python3 -c 'import sys; s=sys.stdin.read()[-3500:]; print(s.replace("%","%25").replace("\r","%0D").replace("\n","%0A"), end="")')"
+            echo "::error title=Verify headless Vulkan::$MSG"
+            exit 1
+          fi
 
       - name: Package Linux portable .tar.xz archive
         run: |
@@ -213,15 +243,31 @@ jobs:
         run: |
           git lfs install --skip-repo
           git config lfs.url https://projects.blender.org/blender/blender.git/info/lfs
-          git lfs pull --include="release/datafiles/assets/**"
-          if (Test-Path .git\lfs) { Remove-Item -Recurse -Force .git\lfs }
+          git lfs pull --exclude="tests/**"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $startupSize = (Get-Item "release\datafiles\startup.blend").Length
+          Write-Host "release\datafiles\startup.blend size: $startupSize bytes"
+          if ($startupSize -le 1024) {
+            throw "release\datafiles\startup.blend is incomplete ($startupSize bytes)"
+          }
+          Remove-Item -Recurse -Force .git\lfs -ErrorAction SilentlyContinue
 
           git config --local submodule.lib/windows_x64.update checkout
           $env:GIT_LFS_SKIP_SMUDGE = "1"
           git submodule update --init --depth 1 --progress lib/windows_x64
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Remove-Item Env:GIT_LFS_SKIP_SMUDGE
           git -C lib/windows_x64 lfs pull
-          Remove-Item -Recurse -Force lib\windows_x64\.git, .git\modules\lib\windows_x64 -ErrorAction SilentlyContinue
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (Test-Path ".git\modules\lib\windows_x64\lfs") {
+            Remove-Item -Recurse -Force ".git\modules\lib\windows_x64\lfs"
+          }
+          if (Test-Path "lib\windows_x64\.git\lfs") {
+            Remove-Item -Recurse -Force "lib\windows_x64\.git\lfs"
+          }
+          if (-not (Test-Path "lib\windows_x64\.git")) {
+            throw "lib\windows_x64\.git missing!"
+          }
           Get-PSDrive -PSProvider FileSystem
 
       - name: Configure Windows Release build
@@ -244,6 +290,7 @@ jobs:
 
           $buildDir = "$($env:RUNNER_TEMP -replace '\\','/')/build-win"
           $installDir = "$($env:RUNNER_TEMP -replace '\\','/')/pkg/blender-${{ env.ARCHIVE_VERSION }}-windows-x64"
+          $logFile = "$env:RUNNER_TEMP\cmake-win.log"
 
           & cmake -S . -B $buildDir -G Ninja `
             @extraCompilerArgs `
@@ -258,15 +305,24 @@ jobs:
             -DWITH_CYCLES_DEVICE_OPTIX=OFF `
             -DWITH_CYCLES_DEVICE_HIPRT=OFF `
             -DWITH_CYCLES_DEVICE_ONEAPI=OFF `
-            -DCMAKE_INSTALL_PREFIX="$installDir"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            -DCMAKE_INSTALL_PREFIX="$installDir" 2>&1 | Tee-Object -FilePath $logFile
+          if ($LASTEXITCODE -ne 0) {
+            $msg = ((Get-Content $logFile -Tail 25) -join "`n").Replace("%","%25").Replace("`r","%0D").Replace("`n","%0A")
+            Write-Host "::error title=Configure Windows Release build::$msg"
+            exit $LASTEXITCODE
+          }
 
       - name: Build & install Windows Release
         shell: pwsh
         run: |
           $buildDir = "$env:RUNNER_TEMP\build-win"
-          ninja -C $buildDir -j 3 install
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $logFile = "$env:RUNNER_TEMP\build-win.log"
+          & ninja -C $buildDir -j 3 install 2>&1 | Tee-Object -FilePath $logFile
+          if ($LASTEXITCODE -ne 0) {
+            $msg = ((Get-Content $logFile -Tail 30) -join "`n").Replace("%","%25").Replace("`r","%0D").Replace("`n","%0A")
+            Write-Host "::error title=Build Windows Release::$msg"
+            exit $LASTEXITCODE
+          }
           Remove-Item -Recurse -Force $buildDir -ErrorAction SilentlyContinue
           Remove-Item -Recurse -Force lib\windows_x64 -ErrorAction SilentlyContinue
           Get-PSDrive -PSProvider FileSystem
@@ -284,8 +340,13 @@ jobs:
           }
 
           $env:GOO_SKIP_GPU_RENDER = "1"
-          & $blenderExe --background --factory-startup --python-exit-code 1 --python "$env:GITHUB_WORKSPACE\tests\python\goo_engine_ci_test.py"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $logFile = "$env:RUNNER_TEMP\qa-win.log"
+          & $blenderExe --background --factory-startup --python-exit-code 1 --python "$env:GITHUB_WORKSPACE\tests\python\goo_engine_ci_test.py" 2>&1 | Tee-Object -FilePath $logFile
+          if ($LASTEXITCODE -ne 0) {
+            $msg = ((Get-Content $logFile -Tail 30) -join "`n").Replace("%","%25").Replace("`r","%0D").Replace("`n","%0A")
+            Write-Host "::error title=Verify Windows QA::$msg"
+            exit $LASTEXITCODE
+          }
 
       - name: Package Windows portable .zip archive
         shell: pwsh
