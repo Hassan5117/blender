@@ -50,8 +50,8 @@ static int node_shader_gpu_light_info(GPUMaterial *mat,
                         "node_light_info_simple",
                         in,
                         out,
-                        GPU_constant(color),
-                        GPU_constant(&power));
+                        GPU_uniform(color),
+                        GPU_uniform(&power));
 }
 
 }  // namespace nodes::node_shader_light_info_cc

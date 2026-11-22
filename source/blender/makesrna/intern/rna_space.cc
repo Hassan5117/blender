@@ -1506,7 +1506,7 @@ static int rna_3DViewShading_type_get(PointerRNA *ptr)
   RenderEngineType *type = (scene) ? RE_engines_find(scene->r.engine) : nullptr;
   View3DShading *shading = static_cast<View3DShading *>(ptr->data);
 
-  if (scene == nullptr || BKE_scene_uses_blender_eevee(scene)) {
+  if (scene == nullptr || BKE_scene_uses_blender_eevee(scene) || BKE_scene_uses_goo_engine(scene)) {
     return shading->type;
   }
   else if (BKE_scene_uses_blender_workbench(scene)) {
@@ -1545,7 +1545,7 @@ static const EnumPropertyItem *rna_3DViewShading_type_itemf(bContext * /*C*/,
   RNA_enum_items_add_value(&item, &totitem, rna_enum_shading_type_items, OB_WIRE);
   RNA_enum_items_add_value(&item, &totitem, rna_enum_shading_type_items, OB_SOLID);
 
-  if (scene == nullptr || BKE_scene_uses_blender_eevee(scene)) {
+  if (scene == nullptr || BKE_scene_uses_blender_eevee(scene) || BKE_scene_uses_goo_engine(scene)) {
     RNA_enum_items_add_value(&item, &totitem, rna_enum_shading_type_items, OB_MATERIAL);
     RNA_enum_items_add_value(&item, &totitem, rna_enum_shading_type_items, OB_RENDER);
   }
@@ -1711,7 +1711,8 @@ static const EnumPropertyItem *rna_3DViewShading_render_pass_itemf(bContext *C,
   ViewLayer *view_layer = CTX_data_view_layer(C);
 
   const bool aov_available = BKE_view_layer_has_valid_aov(view_layer);
-  const bool eevee_active = STREQ(scene->r.engine, "BLENDER_EEVEE");
+  const bool eevee_active = (scene != nullptr) && (BKE_scene_uses_blender_eevee(scene) ||
+                                                   BKE_scene_uses_goo_engine(scene));
 
   int totitem = 0;
   EnumPropertyItem *result = nullptr;

@@ -128,7 +128,7 @@ void Instance::init()
     world_color_ = float4(0.0f, 0.0f, 0.0f, 1.0f);
   }
 
-  is_image_render_ = draw_ctx->is_image_render();
+  is_image_render_ = draw_ctx->is_scene_render();
   is_viewport_image_render_ = draw_ctx->is_viewport_image_render();
   film_transparent_ = (scene != nullptr) && (scene->r.alphamode == R_ALPHAPREMUL);
 
@@ -165,16 +165,26 @@ void Instance::begin_sync()
   if (use_lookdev_world) {
     if (lookdev_world_.sync(lookdev_params)) {
       probes.mark_dirty();
+      taa_history_valid_ = false;
     }
     world = lookdev_world_.world_get();
   }
   else if (prev_lookdev_params_ != lookdev_params) {
     probes.mark_dirty();
+    taa_history_valid_ = false;
   }
   if (assign_if_different(prev_world_ptr_, static_cast<const World *>(world))) {
     probes.mark_dirty();
+    taa_history_valid_ = false;
   }
   prev_lookdev_params_ = lookdev_params;
+
+  use_scene_lights_ = is_image_render_ || (draw_ctx->v3d == nullptr) ||
+                      V3D_USES_SCENE_LIGHTS(draw_ctx->v3d);
+  if (assign_if_different(prev_use_scene_lights_, use_scene_lights_)) {
+    probes.mark_dirty();
+    taa_history_valid_ = false;
+  }
 
   world_color_ = use_sky_ ? extract_world_ambient(world) : float4(0.0f, 0.0f, 0.0f, 1.0f);
   GPUMaterial *world_mat = use_sky_ ? materials.world_get(world, deferred_compile) : nullptr;
@@ -625,7 +635,7 @@ void Instance::object_sync(ObjectRef &ob_ref, Manager &manager)
 {
   Object *ob = ob_ref.object;
   if (ob->type == OB_LAMP) {
-    if (DRW_object_visibility_in_active_context(ob) & OB_VISIBLE_SELF) {
+    if (use_scene_lights_ && (DRW_object_visibility_in_active_context(ob) & OB_VISIBLE_SELF) != 0) {
       lights.light_sync(ob, View::default_get());
     }
     return;
@@ -1001,6 +1011,10 @@ void Instance::draw_to(Manager &manager, View &view, gpu::Texture *color, gpu::T
     }
     scene_color_ptr_ = scene_color_tx_;
   }
+  else {
+    scene_color_tx_.free();
+    scene_color_ptr_ = dummy_color_tx_;
+  }
 
   bool has_taa_accum = false;
   gpu::Texture *resolved_tx = sample_color_tx_;
@@ -1181,6 +1195,8 @@ void Instance::draw_to(Manager &manager, View &view, gpu::Texture *color, gpu::T
       resolved_tx = sample_color_tx_;
       taa_history_valid_ = false;
       taa_sample_index_ = 0;
+      taa_history_tx_[0].free();
+      taa_history_tx_[1].free();
     }
     else {
       for (int h = 0; h < 2; h++) {

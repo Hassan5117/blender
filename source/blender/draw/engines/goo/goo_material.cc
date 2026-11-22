@@ -6,15 +6,21 @@
  * \ingroup draw_engine
  */
 
+#include <cstring>
 #include <sstream>
 
 #include "BKE_lib_id.hh"
 #include "BKE_material.hh"
+#include "BKE_node.hh"
+#include "BKE_node_runtime.hh"
 
 #include "BLI_math_bits.h"
 #include "BLI_set.hh"
 
+#include "DNA_light_types.h"
 #include "DNA_material_types.h"
+#include "DNA_node_types.h"
+#include "DNA_object_types.h"
 #include "DNA_world_types.h"
 
 #include "GPU_capabilities.hh"
@@ -498,12 +504,75 @@ GPUMaterial *MaterialModule::world_get(World *wo, bool deferred_compilation)
   }
 }
 
-static GPUMaterial *material_variant_get(Material *ma,
-                                         uint64_t variant,
-                                         bool deferred_compilation,
-                                         int &r_queued_count)
+static uint64_t hash_mix_u64(uint64_t h, uint64_t val)
+{
+  h ^= val + 0x9e3779b97f4a7c15ULL + (h << 6) + (h >> 2);
+  return h;
+}
+
+static uint64_t hash_float(uint64_t h, float f)
+{
+  uint32_t bits = 0;
+  std::memcpy(&bits, &f, sizeof(bits));
+  return hash_mix_u64(h, uint64_t(bits));
+}
+
+static bool collect_light_info_hash(const bNodeTree *ntree,
+                                    Set<const bNodeTree *> &visited,
+                                    uint64_t &io_hash,
+                                    bool &r_has_light_info)
+{
+  if (ntree == nullptr || !visited.add(ntree)) {
+    return false;
+  }
+  ntree->ensure_topology_cache();
+
+  const Span<const bNode *> li_nodes = ntree->nodes_by_type("ShaderNodeLightInfo"_ustr);
+  for (const bNode *node : li_nodes) {
+    r_has_light_info = true;
+    io_hash = hash_mix_u64(io_hash, uint64_t(reinterpret_cast<uintptr_t>(node->id)));
+    const Object *ob = id_cast<const Object *>(node->id);
+    if (ob != nullptr && ob->type == OB_LAMP && ob->data != nullptr) {
+      const Light *light = id_cast<const Light *>(ob->data);
+      io_hash = hash_float(io_hash, light->r);
+      io_hash = hash_float(io_hash, light->g);
+      io_hash = hash_float(io_hash, light->b);
+      io_hash = hash_float(io_hash, light->energy);
+    }
+  }
+
+  for (const bNode *group_node : ntree->nodes_by_type("ShaderNodeGroup"_ustr)) {
+    const bNodeTree *sub_tree = reinterpret_cast<const bNodeTree *>(group_node->id);
+    collect_light_info_hash(sub_tree, visited, io_hash, r_has_light_info);
+  }
+  return r_has_light_info;
+}
+
+void MaterialModule::invalidate_light_info_if_needed(Material *mat)
+{
+  if (mat == nullptr || mat->nodetree == nullptr) {
+    return;
+  }
+  Set<const bNodeTree *> visited;
+  uint64_t hash = 0xcbf29ce484222325ULL;
+  bool has_light_info = false;
+  collect_light_info_hash(mat->nodetree, visited, hash, has_light_info);
+  if (!has_light_info) {
+    light_info_hashes_.remove(mat);
+    return;
+  }
+  if (const uint64_t *prev = light_info_hashes_.lookup_ptr(mat)) {
+    if (*prev != hash) {
+      GPU_material_free(&mat->gpumaterial);
+    }
+  }
+  light_info_hashes_.add_overwrite(mat, hash);
+}
+
+GPUMaterial *MaterialModule::variant_get(Material *ma, uint64_t variant, bool deferred_compilation)
 {
   Material *mat = ma ? ma : BKE_material_default_surface();
+  invalidate_light_info_if_needed(mat);
   bNodeTree *ntree = mat->nodetree ? mat->nodetree : BKE_material_default_surface()->nodetree;
 
   GPUMaterialFromNodeTreeResult result = GPU_material_from_nodetree(mat,
@@ -523,7 +592,7 @@ static GPUMaterial *material_variant_get(Material *ma,
     case GPU_MAT_SUCCESS:
       return gpumat;
     case GPU_MAT_QUEUED:
-      r_queued_count++;
+      queued_count++;
       return nullptr;
     case GPU_MAT_FAILED:
     default:
@@ -533,32 +602,32 @@ static GPUMaterial *material_variant_get(Material *ma,
 
 GPUMaterial *MaterialModule::surface_get(Material *ma, bool deferred_compilation)
 {
-  return material_variant_get(ma, GOO_MAT_SURFACE_MESH, deferred_compilation, queued_count);
+  return variant_get(ma, GOO_MAT_SURFACE_MESH, deferred_compilation);
 }
 
 GPUMaterial *MaterialModule::prepass_get(Material *ma, bool deferred_compilation)
 {
-  return material_variant_get(ma, GOO_MAT_PREPASS_MESH, deferred_compilation, queued_count);
+  return variant_get(ma, GOO_MAT_PREPASS_MESH, deferred_compilation);
 }
 
 GPUMaterial *MaterialModule::shadow_get(Material *ma, bool deferred_compilation)
 {
-  return material_variant_get(ma, GOO_MAT_SHADOW_MESH, deferred_compilation, queued_count);
+  return variant_get(ma, GOO_MAT_SHADOW_MESH, deferred_compilation);
 }
 
 GPUMaterial *MaterialModule::curves_surface_get(Material *ma, bool deferred_compilation)
 {
-  return material_variant_get(ma, GOO_MAT_SURFACE_CURVES, deferred_compilation, queued_count);
+  return variant_get(ma, GOO_MAT_SURFACE_CURVES, deferred_compilation);
 }
 
 GPUMaterial *MaterialModule::curves_prepass_get(Material *ma, bool deferred_compilation)
 {
-  return material_variant_get(ma, GOO_MAT_PREPASS_CURVES, deferred_compilation, queued_count);
+  return variant_get(ma, GOO_MAT_PREPASS_CURVES, deferred_compilation);
 }
 
 GPUMaterial *MaterialModule::curves_shadow_get(Material *ma, bool deferred_compilation)
 {
-  return material_variant_get(ma, GOO_MAT_SHADOW_CURVES, deferred_compilation, queued_count);
+  return variant_get(ma, GOO_MAT_SHADOW_CURVES, deferred_compilation);
 }
 
 GPUMaterial *MaterialModule::world_volume_get(World *wo, bool deferred_compilation)
@@ -597,8 +666,7 @@ GPUMaterial *MaterialModule::object_volume_get(Material *ma, bool deferred_compi
   if (ma == nullptr || ma->nodetree == nullptr) {
     return nullptr;
   }
-  GPUMaterial *gpumat = material_variant_get(
-      ma, GOO_MAT_VOLUME_OBJECT, deferred_compilation, queued_count);
+  GPUMaterial *gpumat = variant_get(ma, GOO_MAT_VOLUME_OBJECT, deferred_compilation);
   if (gpumat != nullptr && !GPU_material_has_volume_output(gpumat)) {
     return nullptr;
   }

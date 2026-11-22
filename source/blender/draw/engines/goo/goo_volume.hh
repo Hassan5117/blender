@@ -107,6 +107,7 @@ class VolumeModule {
   int unf_sample_index_ = 0;
 
   void ensure_render_targets(int2 render_extent);
+  void free_render_targets();
 
  public:
   void begin_sync(const Scene *scene,

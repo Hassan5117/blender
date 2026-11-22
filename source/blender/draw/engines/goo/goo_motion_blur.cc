@@ -37,6 +37,16 @@ void MotionBlurModule::begin_sync(const Scene *scene, const ViewLayer *vl, bool 
              (vl == nullptr || (vl->layflag & SCE_LAY_MOTION_BLUR) != 0) &&
              (scene->r.motion_blur_shutter > 1e-5f);
   if (!enabled_) {
+    velocity_tx_.free();
+    tile_tx_.free();
+    tile_dilated_tx_.free();
+    out_tx_.free();
+    velocity_ptr_ = nullptr;
+    tile_ptr_ = nullptr;
+    tile_dilated_ptr_ = nullptr;
+    src_color_ptr_ = nullptr;
+    src_depth_ptr_ = nullptr;
+    out_ptr_ = nullptr;
     return;
   }
 

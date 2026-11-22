@@ -1673,6 +1673,7 @@ int Scene::playback_end() const
 /** \} */
 
 const char *RE_engine_id_BLENDER_EEVEE = "BLENDER_EEVEE";
+const char *RE_engine_id_GOO_ENGINE = "GOO_ENGINE";
 const char *RE_engine_id_BLENDER_EEVEE_NEXT = "BLENDER_EEVEE_NEXT";
 const char *RE_engine_id_BLENDER_WORKBENCH = "BLENDER_WORKBENCH";
 const char *RE_engine_id_CYCLES = "CYCLES";
@@ -3039,6 +3040,11 @@ bool BKE_scene_uses_blender_eevee(const Scene *scene)
   return STREQ(scene->r.engine, RE_engine_id_BLENDER_EEVEE);
 }
 
+bool BKE_scene_uses_goo_engine(const Scene *scene)
+{
+  return STREQ(scene->r.engine, RE_engine_id_GOO_ENGINE);
+}
+
 bool BKE_scene_uses_blender_workbench(const Scene *scene)
 {
   return STREQ(scene->r.engine, RE_engine_id_BLENDER_WORKBENCH);
@@ -3051,7 +3057,8 @@ bool BKE_scene_uses_cycles(const Scene *scene)
 
 bool BKE_scene_uses_shader_previews(const Scene *scene)
 {
-  return BKE_scene_uses_blender_eevee(scene) || BKE_scene_uses_cycles(scene);
+  return BKE_scene_uses_blender_eevee(scene) || BKE_scene_uses_goo_engine(scene) ||
+         BKE_scene_uses_cycles(scene);
 }
 
 /* This enumeration has to match the one defined in the Cycles addon. */

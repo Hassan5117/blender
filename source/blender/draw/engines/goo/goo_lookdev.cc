@@ -61,7 +61,7 @@ LookdevParameters::LookdevParameters(const View3D *v3d)
 
 bool LookdevParameters::operator==(const LookdevParameters &other) const
 {
-  return hdri == other.hdri && working_space == other.working_space &&
+  return hdri == other.hdri && working_space == other.working_space && rot_z == other.rot_z &&
          background_opacity == other.background_opacity && blur == other.blur &&
          intensity == other.intensity && show_scene_world == other.show_scene_world &&
          camera_space == other.camera_space;
@@ -119,28 +119,14 @@ LookdevWorld::LookdevWorld()
   angle_socket_ = static_cast<bNodeSocketValueFloat *>(rotate_z_vector_angle.default_value);
   node_add_link(ntree, rotate_x, rotate_x_out, rotate_z, rotate_z_vector_in);
 
-  bNode &light_path = *node_add_static_node(nullptr, ntree, SH_NODE_LIGHT_PATH);
-  bNodeSocket &is_camera_out = *node_find_socket(light_path, SOCK_OUT, "Is Camera Ray"_ustr);
-
-  bNode &path_mix = *node_add_static_node(nullptr, ntree, SH_NODE_MIX);
-  NodeShaderMix &path_mix_data = *static_cast<NodeShaderMix *>(path_mix.storage);
-  path_mix_data.data_type = SOCK_VECTOR;
-  path_mix_data.factor_mode = NODE_MIX_MODE_UNIFORM;
-  path_mix_data.clamp_factor = false;
-  auto &path_mix_out = *node_find_socket(path_mix, SOCK_OUT, "Result_Vector"_ustr);
-  auto &path_mix_fac = *static_cast<bNodeSocket *>(BLI_findlink(&path_mix.inputs, 0));
-  auto &path_mix_in0 = *static_cast<bNodeSocket *>(BLI_findlink(&path_mix.inputs, 4));
-  auto &path_mix_in1 = *static_cast<bNodeSocket *>(BLI_findlink(&path_mix.inputs, 5));
-  node_add_link(ntree, light_path, is_camera_out, path_mix, path_mix_fac);
-  node_add_link(ntree, coordinate, generated_sock, path_mix, path_mix_in0);
-  node_add_link(ntree, rotate_z, rotate_z_out, path_mix, path_mix_in1);
-
   bNode &environment = *node_add_static_node(nullptr, ntree, SH_NODE_TEX_ENVIRONMENT);
   environment_node_ = &environment;
   NodeTexImage *environment_storage = static_cast<NodeTexImage *>(environment.storage);
   auto &environment_vector_in = *node_find_socket(environment, SOCK_IN, "Vector"_ustr);
   auto &environment_out = *node_find_socket(environment, SOCK_OUT, "Color"_ustr);
-  node_add_link(ntree, path_mix, path_mix_out, environment, environment_vector_in);
+  /* Goo's world probe captures LookDev directly without a separate sampling rotation matrix,
+   * so feed the rotated coordinates for both background and probe capture passes. */
+  node_add_link(ntree, rotate_z, rotate_z_out, environment, environment_vector_in);
 
   bNode &background = *node_add_static_node(nullptr, ntree, SH_NODE_BACKGROUND);
   auto &background_out = *node_find_socket(background, SOCK_OUT, "Background"_ustr);

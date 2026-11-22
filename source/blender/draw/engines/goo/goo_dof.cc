@@ -54,6 +54,20 @@ static float2 dof_polygon_sample(int sample_index,
   return float2(std::cos(ang), std::sin(ang)) * (r * scale) * aniso;
 }
 
+void DofModule::free_textures()
+{
+  coc_tx_.free();
+  prefilter_tx_.free();
+  tile_a_tx_.free();
+  tile_b_tx_.free();
+  out_tx_.free();
+  coc_ptr_ = nullptr;
+  prefilter_ptr_ = nullptr;
+  tile_a_ptr_ = nullptr;
+  tile_b_ptr_ = nullptr;
+  out_ptr_ = nullptr;
+}
+
 void DofModule::sync(const Scene *scene,
                      const Object *camera_ob,
                      int2 render_extent,
@@ -61,11 +75,13 @@ void DofModule::sync(const Scene *scene,
 {
   enabled_ = false;
   if (camera_ob == nullptr || camera_ob->type != OB_CAMERA || camera_ob->data == nullptr) {
+    free_textures();
     return;
   }
 
   const Camera *cam = reinterpret_cast<const Camera *>(camera_ob->data);
   if ((cam->dof.flag & CAM_DOF_ENABLED) == 0 || cam->type == CAM_PANO) {
+    free_textures();
     return;
   }
 
@@ -189,6 +205,7 @@ void DofModule::render(Manager &manager,
                                   std::max(overblur_, 1.25f / std::sqrt(float(total_samples))) :
                               aperture_radius_;
   if (fx_radius <= 1e-6f) {
+    free_textures();
     return;
   }
 

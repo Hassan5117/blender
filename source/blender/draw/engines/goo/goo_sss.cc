@@ -60,6 +60,7 @@ void SssModule::end_sync(int2 render_extent)
     resolve_sss_ptr_ = sss_data_tx_;
   }
   else {
+    sss_data_tx_.free();
     sss_write_ptr_ = dummy_sss_tx_;
     resolve_sss_ptr_ = dummy_sss_tx_;
   }

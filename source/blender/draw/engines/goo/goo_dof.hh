@@ -74,6 +74,8 @@ class DofModule {
   float denoise_fac_ = 0.75f;
   float hq_slight_ = 0.0f;
 
+  void free_textures();
+
  public:
   void sync(const Scene *scene,
             const Object *camera_ob,

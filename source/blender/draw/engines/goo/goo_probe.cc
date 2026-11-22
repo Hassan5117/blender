@@ -612,6 +612,8 @@ void ProbeModule::capture_planar_probes(Manager &manager,
                                         bool /*use_sky*/)
 {
   if (planars_.is_empty()) {
+    planar_tx_.free();
+    planar_depth_tx_.free();
     planar_ptr_ = dummy_planar_tx_;
     probe_buf_.planar_probe_count = 0;
     probe_buf_.capture_flags = 0;

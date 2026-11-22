@@ -113,3 +113,11 @@
 #define GOO_LIGHT_POINT 1
 #define GOO_LIGHT_SPOT 2
 #define GOO_LIGHT_AREA 3
+
+/* Ray pipeline types for Light Path node compatibility (`gpu_shader_material_light_path.glsl`). */
+#ifndef RAY_TYPE_CAMERA
+#  define RAY_TYPE_CAMERA 0u
+#  define RAY_TYPE_SHADOW 1u
+#  define RAY_TYPE_DIFFUSE 2u
+#  define RAY_TYPE_GLOSSY 3u
+#endif

@@ -108,6 +108,8 @@ class Instance : public DrawEngine {
   RenderPassModule render_passes;
   bool is_image_render_ = false;
   bool is_viewport_image_render_ = false;
+  bool use_scene_lights_ = true;
+  bool prev_use_scene_lights_ = true;
 
   /** Sampling / TAA / Film / Overscan state. */
   Sampling sampling_;

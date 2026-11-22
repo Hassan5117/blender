@@ -260,6 +260,7 @@ bool BKE_scene_use_shading_nodes_custom(Scene *scene);
 bool BKE_scene_use_spherical_stereo(Scene *scene);
 
 bool BKE_scene_uses_blender_eevee(const Scene *scene);
+bool BKE_scene_uses_goo_engine(const Scene *scene);
 bool BKE_scene_uses_blender_workbench(const Scene *scene);
 bool BKE_scene_uses_cycles(const Scene *scene);
 

@@ -593,6 +593,7 @@ void RenderPassModule::acquire_buffers(int2 output_extent, int2 render_extent)
     display_color_ptr_ = accum_rp_color_tx_;
   }
   else {
+    accum_rp_color_tx_.free();
     rp_color_ptr_ = dummy_rp_color_tx_;
     accum_sample_color_ptr_ = dummy_rp_color_tx_;
     accum_out_color_ptr_ = dummy_accum_color_tx_;
@@ -619,6 +620,7 @@ void RenderPassModule::acquire_buffers(int2 output_extent, int2 render_extent)
     display_value_ptr_ = accum_rp_value_tx_;
   }
   else {
+    accum_rp_value_tx_.free();
     accum_out_value_ptr_ = dummy_accum_value_tx_;
     display_value_ptr_ = dummy_accum_value_tx_;
   }
@@ -639,6 +641,7 @@ void RenderPassModule::acquire_buffers(int2 output_extent, int2 render_extent)
     display_crypto_ptr_ = accum_crypto_tx_;
   }
   else {
+    accum_crypto_tx_.free();
     rp_crypto_ptr_ = dummy_rp_crypto_tx_;
     accum_sample_crypto_ptr_ = dummy_rp_crypto_tx_;
     accum_out_crypto_ptr_ = dummy_accum_crypto_tx_;

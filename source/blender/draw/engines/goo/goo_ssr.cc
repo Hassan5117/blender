@@ -69,6 +69,12 @@ void SsrModule::init_buffers(int2 render_extent,
     ssr_fallback_ptr_ = ssr_fallback_tx_;
   }
   else {
+    ssr_data_tx_.free();
+    ssr_spec_tx_.free();
+    ssr_fallback_tx_.free();
+    ssr_out_tx_.free();
+    ssr_hit_tx_.free();
+    hiz_depth_tx_.free();
     ssr_data_ptr_ = dummy_ssr_tx_;
     ssr_spec_ptr_ = dummy_ssr_tx_;
     ssr_fallback_ptr_ = dummy_ssr_tx_;

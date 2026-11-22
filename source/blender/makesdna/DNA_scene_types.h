@@ -2970,6 +2970,7 @@ struct Scene {
 
 /** #RenderData::engine (scene.cc) */
 extern const char *RE_engine_id_BLENDER_EEVEE;
+extern const char *RE_engine_id_GOO_ENGINE;
 extern const char *RE_engine_id_BLENDER_WORKBENCH;
 extern const char *RE_engine_id_CYCLES;
 /** Only used for versioning. Was used during the transition period between 4.2 and 5.0. */

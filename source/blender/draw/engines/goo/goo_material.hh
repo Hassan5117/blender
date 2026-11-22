@@ -29,6 +29,10 @@ namespace blender::goo {
 class MaterialModule {
  private:
   World *default_world_ = nullptr;
+  Map<const Material *, uint64_t> light_info_hashes_;
+
+  void invalidate_light_info_if_needed(Material *mat);
+  GPUMaterial *variant_get(Material *ma, uint64_t variant, bool deferred_compilation);
 
  public:
   ~MaterialModule();

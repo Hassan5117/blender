@@ -70,6 +70,28 @@ void VolumeModule::ensure_render_targets(int2 render_extent)
   far_depth_ptr_ = vol_obj_far_tx_;
 }
 
+void VolumeModule::free_render_targets()
+{
+  prop_scatter_tx_.free();
+  prop_extinct_tx_.free();
+  prop_emissive_tx_.free();
+  scatter_lit_tx_.free();
+  integrated_scatter_tx_.free();
+  integrated_transmit_tx_.free();
+  vol_obj_near_tx_.free();
+  vol_obj_far_tx_.free();
+  vol_dummy_fb_tx_.free();
+
+  prop_scatter_ptr_ = dummy_3d_tx_;
+  prop_extinct_ptr_ = dummy_3d_tx_;
+  prop_emissive_ptr_ = dummy_3d_tx_;
+  scatter_lit_ptr_ = dummy_3d_tx_;
+  integrated_scatter_ptr_ = dummy_3d_tx_;
+  integrated_transmit_ptr_ = dummy_3d_tx_;
+  near_depth_ptr_ = dummy_depth_tx_;
+  far_depth_ptr_ = dummy_depth_tx_;
+}
+
 void VolumeModule::begin_sync(const Scene *scene,
                               World *world,
                               MaterialModule &materials,
@@ -275,6 +297,9 @@ void VolumeModule::render(Manager &manager,
                           int2 render_extent)
 {
   if (!enabled() || depth_tx == nullptr || color_tx == nullptr) {
+    if (!enabled()) {
+      free_render_targets();
+    }
     return;
   }
 
