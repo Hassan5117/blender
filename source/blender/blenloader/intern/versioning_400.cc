@@ -1776,6 +1776,10 @@ void blo_do_versions_400(FileData *fd, Library * /*lib*/, Main *bmain)
       versioning_node_group_sort_sockets_recursive(ntree.tree_interface.root_panel);
     }
   }
+
+  /* Goo Engine: migrate Goo 3.x/4.x scenes from BLENDER_EEVEE to GOO_ENGINE before 4.1+/4.2+
+   * EEVEE-Next versioning mutates material blend flags or injects EEVEE-Next alpha nodes. */
+  version_goo_migrate_scenes_early(fd, bmain);
 }
 
 }  // namespace blender

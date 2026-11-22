@@ -26,6 +26,7 @@ struct ARegion;
 struct bNode;
 struct bNodeSocket;
 struct bNodeTree;
+struct FileData;
 struct ID;
 struct IDProperty;
 struct Main;
@@ -267,6 +268,9 @@ void version_system_idprops_nodes_generate(Main *bmain);
 void version_system_idprops_children_bones_generate(Main *bmain);
 
 bool all_scenes_use(Main *bmain, const Span<const char *> engines);
+
+bool is_goo_blend_file(const FileData *fd, Main *bmain);
+void version_goo_migrate_scenes_early(const FileData *fd, Main *bmain);
 
 /**
  * Adjust the values of the given FCurve key frames by applying the given function. The function is

@@ -1050,30 +1050,34 @@ void blo_do_versions_420(FileData *fd, Library * /*lib*/, Main *bmain)
   }
 
   if (!MAIN_VERSION_FILE_ATLEAST(bmain, 402, 31)) {
-    bool only_uses_eevee_legacy_or_workbench = true;
-    for (Scene &scene : bmain->scenes) {
-      if (!STR_ELEM(scene.r.engine, RE_engine_id_BLENDER_EEVEE, RE_engine_id_BLENDER_WORKBENCH)) {
-        only_uses_eevee_legacy_or_workbench = false;
+    if (!all_scenes_use(bmain, {RE_engine_id_GOO_ENGINE})) {
+      bool only_uses_eevee_legacy_or_workbench = true;
+      for (Scene &scene : bmain->scenes) {
+        if (!STR_ELEM(
+                scene.r.engine, RE_engine_id_BLENDER_EEVEE, RE_engine_id_BLENDER_WORKBENCH))
+        {
+          only_uses_eevee_legacy_or_workbench = false;
+        }
       }
-    }
-    /* Mark old EEVEE world volumes for showing conversion operator. */
-    for (World &world : bmain->worlds) {
-      if (world.nodetree) {
-        bNode *output_node = version_eevee_output_node_get(world.nodetree, SH_NODE_OUTPUT_WORLD);
-        if (output_node) {
-          bNodeSocket *volume_input_socket = static_cast<bNodeSocket *>(
-              BLI_findlink(&output_node->inputs, 1));
-          if (volume_input_socket) {
-            for (bNodeLink &node_link : world.nodetree->links) {
-              if (node_link.tonode == output_node && node_link.tosock == volume_input_socket) {
-                world.flag |= WO_USE_EEVEE_FINITE_VOLUME;
-                /* Only display a warning message if we are sure this can be used by EEVEE. */
-                if (only_uses_eevee_legacy_or_workbench) {
-                  BLO_reportf_wrap(fd->reports,
-                                   RPT_WARNING,
-                                   RPT_("%s contains a volume shader that might need to be "
-                                        "converted to object (see world volume panel)\n"),
-                                   world.id.name + 2);
+      /* Mark old EEVEE world volumes for showing conversion operator. */
+      for (World &world : bmain->worlds) {
+        if (world.nodetree) {
+          bNode *output_node = version_eevee_output_node_get(world.nodetree, SH_NODE_OUTPUT_WORLD);
+          if (output_node) {
+            bNodeSocket *volume_input_socket = static_cast<bNodeSocket *>(
+                BLI_findlink(&output_node->inputs, 1));
+            if (volume_input_socket) {
+              for (bNodeLink &node_link : world.nodetree->links) {
+                if (node_link.tonode == output_node && node_link.tosock == volume_input_socket) {
+                  world.flag |= WO_USE_EEVEE_FINITE_VOLUME;
+                  /* Only display a warning message if we are sure this can be used by EEVEE. */
+                  if (only_uses_eevee_legacy_or_workbench) {
+                    BLO_reportf_wrap(fd->reports,
+                                     RPT_WARNING,
+                                     RPT_("%s contains a volume shader that might need to be "
+                                          "converted to object (see world volume panel)\n"),
+                                     world.id.name + 2);
+                  }
                 }
               }
             }
@@ -1155,7 +1159,7 @@ void blo_do_versions_420(FileData *fd, Library * /*lib*/, Main *bmain)
 
   if (!MAIN_VERSION_FILE_ATLEAST(bmain, 402, 39)) {
     /* Unify cast shadow property with Cycles. */
-    if (!all_scenes_use(bmain, {RE_engine_id_BLENDER_EEVEE})) {
+    if (!all_scenes_use(bmain, {RE_engine_id_BLENDER_EEVEE, RE_engine_id_GOO_ENGINE})) {
       const Light default_light;
       for (Light &light : bmain->lights) {
         IDProperty *clight = version_cycles_properties_from_ID(&light.id);

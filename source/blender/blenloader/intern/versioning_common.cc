@@ -10,11 +10,14 @@
 
 #include <cstring>
 
+#include "DNA_genfile.h"
 #include "DNA_layer_types.h"
 #include "DNA_modifier_types.h"
 #include "DNA_node_types.h"
+#include "DNA_scene_types.h"
 #include "DNA_screen_types.h"
 #include "DNA_sequence_types.h"
+#include "DNA_text_types.h"
 
 #include "BLI_listbase.h"
 #include "BLI_map.hh"
@@ -876,6 +879,80 @@ void do_versions_after_setup(Main *new_bmain,
           id_us_min(&nmd.node_group->id);
           nmd.node_group = nullptr;
         }
+      }
+    }
+  }
+}
+
+bool is_goo_blend_file(const FileData *fd, Main *bmain)
+{
+  if (bmain == nullptr || fd == nullptr || bmain->versionfile >= 500) {
+    return false;
+  }
+
+  if (DNA_struct_member_exists_with_alias(
+          fd->filesdna, "Light", "int", "light_group_bits[4]") ||
+      DNA_struct_exists_with_alias(fd->filesdna, "NodeShaderInfo") ||
+      DNA_struct_exists_with_alias(fd->filesdna, "NodeSdfPrimitive"))
+  {
+    return true;
+  }
+
+  for (Text &text : bmain->texts) {
+    if (STREQ(text.id.name, "TX.version_warning.py")) {
+      return true;
+    }
+  }
+
+  bool found_goo_node = false;
+  FOREACH_NODETREE_BEGIN (bmain, ntree, id) {
+    if (ntree->type == NTREE_SHADER) {
+      for (bNode &node : ntree->nodes) {
+        if (ELEM(node.type_legacy,
+                 SH_NODE_SHADER_INFO,
+                 SH_NODE_SCREENSPACE_INFO,
+                 SH_NODE_SDF_PRIMITIVE,
+                 SH_NODE_SDF_OP,
+                 SH_NODE_SDF_VECTOR_OP,
+                 SH_NODE_SDF_NOISE,
+                 SH_NODE_SET_DEPTH,
+                 SH_NODE_CURVATURE,
+                 SH_NODE_LIGHT_INFO,
+                 SH_NODE_TEX_HEXAGON,
+                 SH_NODE_TWIRL,
+                 SH_NODE_WATER_RIPPLES,
+                 SH_NODE_OKLAB_COLOR_RAMP))
+        {
+          found_goo_node = true;
+          break;
+        }
+      }
+    }
+    if (found_goo_node) {
+      break;
+    }
+  }
+  FOREACH_NODETREE_END;
+
+  return found_goo_node;
+}
+
+void version_goo_migrate_scenes_early(const FileData *fd, Main *bmain)
+{
+  if (bmain == nullptr || fd == nullptr) {
+    return;
+  }
+
+  for (Text &text : bmain->texts) {
+    if (STREQ(text.id.name, "TX.version_warning.py")) {
+      text.flags &= ~TXT_ISSCRIPT;
+    }
+  }
+
+  if (is_goo_blend_file(fd, bmain)) {
+    for (Scene &scene : bmain->scenes) {
+      if (STREQ(scene.r.engine, RE_engine_id_BLENDER_EEVEE)) {
+        STRNCPY_UTF8(scene.r.engine, RE_engine_id_GOO_ENGINE);
       }
     }
   }

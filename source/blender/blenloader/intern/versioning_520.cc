@@ -919,22 +919,11 @@ void blo_do_versions_520(FileData *fd, Library * /*lib*/, Main *bmain)
     FOREACH_NODETREE_END;
   }
 
-  /* Goo Engine: detect Goo 4.x .blend files safely without touching stock Blender 4.x/5.x EEVEE
-   * files, and migrate scenes saved with BLENDER_EEVEE to GOO_ENGINE (while BLENDER_EEVEE_NEXT
-   * continues through do_versions_after_linking_500 -> BLENDER_EEVEE). */
-  const bool is_goo_4x_file =
-      (bmain->versionfile < 500) &&
-      DNA_struct_member_exists_with_alias(
-          fd->filesdna, "Light", "int", "light_group_bits[4]") &&
-      DNA_struct_member_exists_with_alias(
-          fd->filesdna, "SceneEEVEE", "float", "bloom_threshold");
-  if (is_goo_4x_file) {
-    for (Scene &scene : bmain->scenes) {
-      if (STREQ(scene.r.engine, RE_engine_id_BLENDER_EEVEE)) {
-        STRNCPY_UTF8(scene.r.engine, RE_engine_id_GOO_ENGINE);
-      }
-    }
-  }
+  /* Goo Engine: detect Goo 3.x/4.x .blend files safely without touching stock Blender files, and
+   * migrate scenes saved with BLENDER_EEVEE to GOO_ENGINE (idempotent safeguard alongside early
+   * migration in blo_do_versions_400). */
+  const bool is_goo_file = is_goo_blend_file(fd, bmain);
+  version_goo_migrate_scenes_early(fd, bmain);
 
   /* Goo Engine: bloom settings. Files from Goo 4.x already carry these members (read back by
    * name); files from stock Blender 4.2+ do not, so give them the Goo defaults. */
@@ -968,7 +957,7 @@ void blo_do_versions_520(FileData *fd, Library * /*lib*/, Main *bmain)
           fd->filesdna, "SceneEEVEE", "float", "goo_gtao_quality"))
   {
     for (Scene &scene : bmain->scenes) {
-      scene.eevee.goo_gtao_quality = is_goo_4x_file ?
+      scene.eevee.goo_gtao_quality = is_goo_file ?
                                          scene.eevee.fast_gi_quality :
                                          ((scene.eevee.fast_gi_quality > 0.0f) ?
                                               scene.eevee.fast_gi_quality :
@@ -1027,8 +1016,8 @@ void blo_do_versions_520(FileData *fd, Library * /*lib*/, Main *bmain)
     }
   }
 
-  /* Goo Engine: repair ShaderNodeTwirl storage missing in Goo 4.4 files. */
-  if (!MAIN_VERSION_FILE_ATLEAST(bmain, 502, 46)) {
+  /* Goo Engine: repair ShaderNodeTwirl & pre-4.0 ShaderNodeShaderInfo storage if missing. */
+  if (!MAIN_VERSION_FILE_ATLEAST(bmain, 502, 47)) {
     FOREACH_NODETREE_BEGIN (bmain, ntree, id) {
       if (ntree->type == NTREE_SHADER) {
         for (bNode &node : ntree->nodes) {
@@ -1037,6 +1026,13 @@ void blo_do_versions_520(FileData *fd, Library * /*lib*/, Main *bmain)
             BKE_texture_mapping_default(&storage->base.tex_mapping, TEXMAP_TYPE_POINT);
             BKE_texture_colormapping_default(&storage->base.color_mapping);
             node.storage = storage;
+          }
+          else if (node.type_legacy == SH_NODE_SHADER_INFO && node.storage == nullptr) {
+            NodeShaderInfo *shinfo = MEM_new<NodeShaderInfo>(__func__);
+            shinfo->light_group_bits[3] = 1;
+            shinfo->light_group_shadow_bits[3] = 1;
+            shinfo->use_own_light_groups = 0;
+            node.storage = shinfo;
           }
         }
       }
