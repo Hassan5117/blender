@@ -37,6 +37,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             git-lfs \
             build-essential \
+            ccache \
             gcc-14 \
             g++-14 \
             cmake \
@@ -93,14 +94,24 @@ jobs:
           test -e lib/linux_x64/.git
           df -h
 
+      - name: Restore/save Linux ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ccache
+          key: ccache-linux-x64-${{ github.sha }}
+          restore-keys: |
+            ccache-linux-x64-
+
       - name: Configure Linux Release build
         run: |
           set -o pipefail
+          export CCACHE_MAXSIZE=4G CCACHE_SLOPPINESS=pch_defines,time_macros
           if ! cmake -S . -B "$RUNNER_TEMP/build-linux" -G Ninja \
             -DCMAKE_C_COMPILER=gcc-14 \
             -DCMAKE_CXX_COMPILER=g++-14 \
             -C build_files/cmake/config/blender_release.cmake \
             -DCMAKE_BUILD_TYPE=Release \
+            -DWITH_COMPILER_CCACHE=ON \
             -DWITH_LINKER_MOLD=ON \
             -DWITH_DOC_MANPAGE=OFF \
             -DWITH_OPENGL_BACKEND=ON \
@@ -120,11 +131,13 @@ jobs:
       - name: Build & install Linux Release
         run: |
           set -o pipefail
+          export CCACHE_MAXSIZE=4G CCACHE_SLOPPINESS=pch_defines,time_macros
           if ! ninja -C "$RUNNER_TEMP/build-linux" install 2>&1 | tee "$RUNNER_TEMP/build-linux.log"; then
             MSG="$(tail -n 30 "$RUNNER_TEMP/build-linux.log" | python3 -c 'import sys; s=sys.stdin.read()[-3500:]; print(s.replace("%","%25").replace("\r","%0D").replace("\n","%0A"), end="")')"
             echo "::error title=Build Linux Release::$MSG"
             exit 1
           fi
+          ccache -s || true
           rm -rf "$RUNNER_TEMP/build-linux"
           rm -rf lib/linux_x64
           df -h
@@ -317,7 +330,7 @@ jobs:
         run: |
           $buildDir = "$env:RUNNER_TEMP\build-win"
           $logFile = "$env:RUNNER_TEMP\build-win.log"
-          & ninja -C $buildDir -j 3 install 2>&1 | Tee-Object -FilePath $logFile
+          & ninja -C $buildDir -j 4 install 2>&1 | Tee-Object -FilePath $logFile
           if ($LASTEXITCODE -ne 0) {
             $msg = ((Get-Content $logFile -Tail 30) -join "`n").Replace("%","%25").Replace("`r","%0D").Replace("`n","%0A")
             Write-Host "::error title=Build Windows Release::$msg"
