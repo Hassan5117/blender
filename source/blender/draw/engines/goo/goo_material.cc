@@ -331,9 +331,6 @@ static void codegen_callback(void * /*thunk*/, GPUMaterial *gpumat, GPUCodegenOu
     info.batch_resources_.clear();
   }
 
-  /* Allow to use Reverse-Z on OpenGL. Does nothing in other backends. */
-  info.builtins(BuiltinBits::CLIP_CONTROL);
-
   std::stringstream attr_load;
   attr_load << "{\n";
   attr_load << vol_attr_init.str();

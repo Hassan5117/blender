@@ -94,8 +94,9 @@ jobs:
           test -e lib/linux_x64/.git
           df -h
 
-      - name: Restore/save Linux ccache
-        uses: actions/cache@v4
+      - name: Restore Linux ccache
+        id: ccache-restore
+        uses: actions/cache/restore@v4
         with:
           path: ~/.cache/ccache
           key: ccache-linux-x64-${{ github.sha }}
@@ -141,6 +142,13 @@ jobs:
           rm -rf "$RUNNER_TEMP/build-linux"
           rm -rf lib/linux_x64
           df -h
+
+      - name: Save Linux ccache
+        if: steps.ccache-restore.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/ccache
+          key: ccache-linux-x64-${{ github.sha }}
 
       - name: Verify headless OpenGL (Mesa llvmpipe)
         run: |

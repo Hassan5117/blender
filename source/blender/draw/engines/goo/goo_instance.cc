@@ -237,15 +237,16 @@ void Instance::begin_sync()
   prepass_ps_.state_set(DRW_STATE_WRITE_DEPTH | DRW_STATE_DEPTH_LESS_EQUAL);
   prepass_cull_sub_ = &prepass_ps_.sub("PrepassCull");
   prepass_cull_sub_->state_set(DRW_STATE_WRITE_DEPTH | DRW_STATE_DEPTH_LESS_EQUAL |
-                               DRW_STATE_CULL_BACK);
+                                   DRW_STATE_CULL_BACK,
+                               1);
   prepass_cull_sub_->shader_set(sh.shadow_mesh.get());
   probes.bind_ubo(*prepass_cull_sub_);
   prepass_nocull_sub_ = &prepass_ps_.sub("PrepassNoCull");
-  prepass_nocull_sub_->state_set(DRW_STATE_WRITE_DEPTH | DRW_STATE_DEPTH_LESS_EQUAL);
+  prepass_nocull_sub_->state_set(DRW_STATE_WRITE_DEPTH | DRW_STATE_DEPTH_LESS_EQUAL, 1);
   prepass_nocull_sub_->shader_set(sh.shadow_mesh.get());
   probes.bind_ubo(*prepass_nocull_sub_);
   prepass_curves_sub_ = &prepass_ps_.sub("PrepassCurves");
-  prepass_curves_sub_->state_set(DRW_STATE_WRITE_DEPTH | DRW_STATE_DEPTH_LESS_EQUAL);
+  prepass_curves_sub_->state_set(DRW_STATE_WRITE_DEPTH | DRW_STATE_DEPTH_LESS_EQUAL, 1);
   prepass_curves_sub_->shader_set(sh.shadow_curves.get());
   probes.bind_ubo(*prepass_curves_sub_);
 
@@ -472,7 +473,7 @@ PassMain::Sub &Instance::gpumat_sub_get(Manager &manager,
     if (!is_curves && mat && (mat->blend_flag & MA_BL_CULL_BACKFACE) != 0) {
       state |= DRW_STATE_CULL_BACK;
     }
-    sub.state_set(state);
+    sub.state_set(state, 1);
     configure_material_sub(sub, manager, gpumat, mat, false, false, false, is_curves);
     return &sub;
   });
@@ -490,7 +491,7 @@ PassMain::Sub &Instance::refract_sub_get(Manager &manager,
     if (!is_curves && mat && (mat->blend_flag & MA_BL_CULL_BACKFACE) != 0) {
       state |= DRW_STATE_CULL_BACK;
     }
-    sub.state_set(state);
+    sub.state_set(state, 1);
     configure_material_sub(sub, manager, gpumat, mat, true, false, false, is_curves);
     return &sub;
   });
@@ -508,7 +509,7 @@ PassMain::Sub &Instance::prepass_mat_sub_get(Manager &manager,
     if (!is_curves && mat && (mat->blend_flag & MA_BL_CULL_BACKFACE) != 0) {
       state |= DRW_STATE_CULL_BACK;
     }
-    sub.state_set(state);
+    sub.state_set(state, 1);
     configure_material_sub(sub, manager, gpumat, mat, false, true, false, is_curves);
     return &sub;
   });
@@ -567,7 +568,7 @@ void Instance::sync_curves_object(ObjectRef &ob_ref,
     const bool hide_backface = (ma->blend_flag & MA_BL_HIDE_BACKFACE) != 0;
     if (hide_backface) {
       PassMain::Sub &pre_sub = blend_ps_.sub("BlendCurvesPrepass", sort_z);
-      pre_sub.state_set(DRW_STATE_WRITE_DEPTH | DRW_STATE_DEPTH_LESS_EQUAL);
+      pre_sub.state_set(DRW_STATE_WRITE_DEPTH | DRW_STATE_DEPTH_LESS_EQUAL, 1);
       pre_sub.shader_set(ShaderModule::get().shadow_curves.get());
       probes.bind_ubo(pre_sub);
       gpu::Batch *pre_geom = setup_batch(pre_sub, nullptr);
@@ -579,7 +580,7 @@ void Instance::sync_curves_object(ObjectRef &ob_ref,
     PassMain::Sub &col_sub = blend_ps_.sub(ma->id.name + 2, sort_z);
     DRWState col_state = DRW_STATE_WRITE_COLOR | DRW_STATE_BLEND_ALPHA_PREMUL;
     col_state |= hide_backface ? DRW_STATE_DEPTH_EQUAL : DRW_STATE_DEPTH_LESS_EQUAL;
-    col_sub.state_set(col_state);
+    col_sub.state_set(col_state, 1);
     configure_material_sub(col_sub, manager, surf_gpumat, ma, is_refract, false, true, true);
     gpu::Batch *col_geom = setup_batch(col_sub, surf_gpumat);
     if (col_geom != nullptr) {
@@ -756,7 +757,7 @@ void Instance::object_sync(ObjectRef &ob_ref, Manager &manager)
           if (cull_back) {
             pre_state |= DRW_STATE_CULL_BACK;
           }
-          pre_sub.state_set(pre_state);
+          pre_sub.state_set(pre_state, 1);
           pre_sub.shader_set(ShaderModule::get().shadow_mesh.get());
           probes.bind_ubo(pre_sub);
           pre_sub.draw(geoms[i], handle);
@@ -768,7 +769,7 @@ void Instance::object_sync(ObjectRef &ob_ref, Manager &manager)
         if (cull_back) {
           col_state |= DRW_STATE_CULL_BACK;
         }
-        col_sub.state_set(col_state);
+        col_sub.state_set(col_state, 1);
         configure_material_sub(col_sub, manager, gpumat, ma, is_refract, false, true, false);
         col_sub.draw(geoms[i], handle);
         has_blend_draws_ = true;
