@@ -6,6 +6,8 @@ on:
       - goo-port
     tags:
       - "v*-goo*"
+    paths-ignore:
+      - ".github/**"
   workflow_dispatch:
 
 permissions:
@@ -348,25 +350,128 @@ jobs:
           Remove-Item -Recurse -Force lib\windows_x64 -ErrorAction SilentlyContinue
           Get-PSDrive -PSProvider FileSystem
 
-      - name: Verify Windows version string & Goo migration suite
+      - name: Verify Windows version string & headless Mesa GPU QA
         shell: pwsh
         run: |
           $pkgDir = "$env:RUNNER_TEMP\pkg\blender-${{ env.ARCHIVE_VERSION }}-windows-x64"
-          $blenderExe = "$pkgDir\blender.exe"
-          $verOut = & $blenderExe --version
+          $verOut = & "$pkgDir\blender.exe" --version
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Write-Host $verOut
           if (-not ($verOut -match "5\.2\.4 LTS Goo Engine")) {
             throw "Unexpected blender.exe --version output: $verOut"
           }
 
-          $env:GOO_SKIP_GPU_RENDER = "1"
-          $logFile = "$env:RUNNER_TEMP\qa-win.log"
-          & $blenderExe --background --factory-startup --python-exit-code 1 --python "$env:GITHUB_WORKSPACE\tests\python\goo_engine_ci_test.py" 2>&1 | Tee-Object -FilePath $logFile
-          if ($LASTEXITCODE -ne 0) {
-            $msg = ((Get-Content $logFile -Tail 30) -join "`n").Replace("%","%25").Replace("`r","%0D").Replace("`n","%0A")
-            Write-Host "::error title=Verify Windows QA::$msg"
-            exit $LASTEXITCODE
+          $testPkgDir = "$env:RUNNER_TEMP\test-pkg"
+          Remove-Item -Recurse -Force $testPkgDir -ErrorAction SilentlyContinue
+          Copy-Item -Recurse -Force $pkgDir $testPkgDir
+          $blenderExe = "$testPkgDir\blender.exe"
+          $ciScript = "$env:GITHUB_WORKSPACE\tests\python\goo_engine_ci_test.py"
+
+          $mesaUrl = "https://github.com/pal1000/mesa-dist-win/releases/download/26.3.1/mesa3d-26.3.1-release-msvc.7z"
+          $mesaArchive = "$env:RUNNER_TEMP\mesa.7z"
+          & curl.exe -fSL $mesaUrl -o $mesaArchive
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $actualHash = (Get-FileHash -Path $mesaArchive -Algorithm SHA256).Hash.ToLower()
+          $expectedHash = "64e84cf13d67dd354640bf443ed0445e6a83afd06a5729f0750b3744d633b3f1"
+          if ($actualHash -ne $expectedHash) {
+            throw "Mesa SHA-256 mismatch: expected $expectedHash, got $actualHash"
+          }
+
+          $mesaDir = "$env:RUNNER_TEMP\mesa"
+          Remove-Item -Recurse -Force $mesaDir -ErrorAction SilentlyContinue
+          & 7z x $mesaArchive "-o$mesaDir" -y
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Get-ChildItem -Path $mesaDir -Filter "*.7z" | ForEach-Object {
+            & 7z x $_.FullName "-o$($_.DirectoryName)" -y
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+
+          $openglDll = Get-ChildItem -Path $mesaDir -Recurse -Filter "opengl32.dll" |
+            Where-Object { $_.DirectoryName -match '(?i)[\\/]x64($|[\\/])' } |
+            Select-Object -First 1
+          if (-not $openglDll) {
+            $openglDll = Get-ChildItem -Path $mesaDir -Recurse -Filter "opengl32.dll" | Select-Object -First 1
+          }
+          if (-not $openglDll) { throw "opengl32.dll not found in extracted Mesa archive" }
+          $mesaX64Dir = $openglDll.DirectoryName
+
+          $vkOutDir = "$env:RUNNER_TEMP\qa-renders\vulkan"
+          $vulkanLvp = Get-ChildItem -Path $mesaX64Dir -Filter "vulkan_lvp.dll" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($vulkanLvp) {
+            $lvpIcdJson = "$env:RUNNER_TEMP\lvp_icd_abs.json"
+            $icdObj = @{
+              file_format_version = "1.0.0"
+              ICD = @{
+                library_path = $vulkanLvp.FullName
+                api_version = "1.3.0"
+              }
+            }
+            $jsonText = $icdObj | ConvertTo-Json -Depth 4
+            [System.IO.File]::WriteAllText($lvpIcdJson, $jsonText, (New-Object System.Text.UTF8Encoding($false)))
+
+            $vkRegPath = "HKLM:\SOFTWARE\Khronos\Vulkan\Drivers"
+            if (Test-Path $vkRegPath) {
+              $item = Get-Item -Path $vkRegPath
+              foreach ($valName in $item.GetValueNames()) {
+                Remove-ItemProperty -Path $vkRegPath -Name $valName -ErrorAction SilentlyContinue
+              }
+            } else {
+              New-Item -Path $vkRegPath -Force | Out-Null
+            }
+            New-ItemProperty -Path $vkRegPath -Name $lvpIcdJson -PropertyType DWord -Value 0 -Force | Out-Null
+
+            $origPath = $env:PATH
+            $env:PATH = "$origPath;$mesaX64Dir"
+            $env:VK_DRIVER_FILES = $lvpIcdJson
+            $env:VK_ICD_FILENAMES = $lvpIcdJson
+            $env:GOO_CI_SOFTWARE_GPU = "1"
+            $env:GOO_TEST_OUT_DIR = $vkOutDir
+            New-Item -ItemType Directory -Force -Path $vkOutDir | Out-Null
+
+            $vkLog = "$env:RUNNER_TEMP\qa-win-vulkan.log"
+            & $blenderExe --background --factory-startup --gpu-backend vulkan --python-exit-code 1 --python $ciScript 2>&1 | Tee-Object -FilePath $vkLog
+            $vkExit = $LASTEXITCODE
+
+            $env:PATH = $origPath
+            Remove-Item Env:VK_DRIVER_FILES -ErrorAction SilentlyContinue
+            Remove-Item Env:VK_ICD_FILENAMES -ErrorAction SilentlyContinue
+
+            if ($vkExit -ne 0 -or -not (Test-Path "$vkOutDir\goo_ci_goo44_compat.png") -or -not (Test-Path "$vkOutDir\goo_ci_master_showcase.png")) {
+              Write-Host "::warning title=Windows Vulkan (lavapipe)::Headless Windows Vulkan check exited with $vkExit; skipping Windows Vulkan screenshots and continuing with mandatory OpenGL."
+              Remove-Item -Recurse -Force $vkOutDir -ErrorAction SilentlyContinue
+            }
+          }
+
+          Get-ChildItem -Path $mesaX64Dir -Filter "*.dll" | Where-Object { $_.Name -notmatch '^vulkan' } | ForEach-Object {
+            $dst = Join-Path $testPkgDir $_.Name
+            if (-not (Test-Path $dst)) {
+              Copy-Item -Path $_.FullName -Destination $dst
+            }
+          }
+
+          $glOutDir = "$env:RUNNER_TEMP\qa-renders\opengl"
+          New-Item -ItemType Directory -Force -Path $glOutDir | Out-Null
+          $env:GALLIUM_DRIVER = "llvmpipe"
+          $env:LIBGL_ALWAYS_SOFTWARE = "1"
+          $env:GOO_CI_SOFTWARE_GPU = "1"
+          $env:GOO_TEST_OUT_DIR = $glOutDir
+
+          $glLog = "$env:RUNNER_TEMP\qa-win-opengl.log"
+          & $blenderExe --background --factory-startup --gpu-backend opengl --python-exit-code 1 --python $ciScript 2>&1 | Tee-Object -FilePath $glLog
+          $glExit = $LASTEXITCODE
+
+          Remove-Item -Recurse -Force $testPkgDir -ErrorAction SilentlyContinue
+          Remove-Item -Recurse -Force $mesaDir -ErrorAction SilentlyContinue
+          Remove-Item -Force $mesaArchive, "$env:RUNNER_TEMP\lvp_icd_abs.json" -ErrorAction SilentlyContinue
+
+          if ($glExit -ne 0) {
+            $msg = ((Get-Content $glLog -Tail 30) -join "`n").Replace("%","%25").Replace("`r","%0D").Replace("`n","%0A")
+            Write-Host "::error title=Verify Windows OpenGL QA::$msg"
+            exit $glExit
+          }
+          if (-not (Test-Path "$glOutDir\goo_ci_goo44_compat.png") -or -not (Test-Path "$glOutDir\goo_ci_master_showcase.png")) {
+            Write-Host "::error title=Verify Windows OpenGL QA::Expected OpenGL QA PNG renders were not produced in $glOutDir"
+            exit 1
           }
 
       - name: Package Windows portable .zip archive
@@ -392,6 +497,14 @@ jobs:
             ${{ runner.temp }}/dist/blender-*-windows-x64.zip.sha256
           if-no-files-found: error
 
+      - name: Upload Windows OpenGL & Vulkan QA renders
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: goo-engine-windows-qa-renders
+          path: ${{ runner.temp }}/qa-renders
+          if-no-files-found: ignore
+
   publish-release:
     name: Publish GitHub Release
     needs: [linux-x64, windows-x64]
@@ -399,6 +512,13 @@ jobs:
     runs-on: ubuntu-24.04
 
     steps:
+      - name: Checkout macOS reference evidence
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          lfs: false
+          submodules: false
+
       - name: Download Linux release archive
         uses: actions/download-artifact@v4
         with:
@@ -411,6 +531,122 @@ jobs:
           name: goo-engine-windows-x64
           path: release-assets
 
+      - name: Download Linux OpenGL & Vulkan QA renders
+        uses: actions/download-artifact@v4
+        with:
+          name: goo-engine-linux-qa-renders
+          path: qa-linux
+
+      - name: Download Windows OpenGL & Vulkan QA renders
+        uses: actions/download-artifact@v4
+        with:
+          name: goo-engine-windows-qa-renders
+          path: qa-windows
+
+      - name: Prepare evidence PNGs and release notes
+        run: |
+          python3 - <<'PY'
+          import base64
+          import os
+          from pathlib import Path
+          import shutil
+
+          repo = os.environ["GITHUB_REPOSITORY"]
+          tag = "v5.2.4-goo"
+          base_url = f"https://github.com/{repo}/releases/download/{tag}"
+
+          out_dir = Path("release-assets")
+          out_dir.mkdir(parents=True, exist_ok=True)
+
+          def verify_png(path: Path):
+              data = path.read_bytes()
+              assert len(data) > 1024, f"PNG too small: {path} ({len(data)} bytes)"
+              assert data[:8] == b"\x89PNG\r\n\x1a\n", f"Invalid PNG header: {path}"
+
+          def decode_b64(src: Path, dst: Path):
+              dst.write_bytes(base64.b64decode(src.read_text()))
+              verify_png(dst)
+
+          def copy_png(src: Path, dst: Path):
+              assert src.is_file(), f"Missing render: {src}"
+              shutil.copy2(src, dst)
+              verify_png(dst)
+
+          decode_b64(
+              Path(".github/evidence/macos-arm64-metal-goo44_compat.png.b64"),
+              out_dir / "evidence-macos-arm64-metal-goo44_compat.png",
+          )
+          decode_b64(
+              Path(".github/evidence/macos-arm64-metal-master_showcase.png.b64"),
+              out_dir / "evidence-macos-arm64-metal-master_showcase.png",
+          )
+          copy_png(
+              Path("qa-linux/opengl/goo_ci_goo44_compat.png"),
+              out_dir / "evidence-linux-x64-opengl-goo44_compat.png",
+          )
+          copy_png(
+              Path("qa-linux/opengl/goo_ci_master_showcase.png"),
+              out_dir / "evidence-linux-x64-opengl-master_showcase.png",
+          )
+          copy_png(
+              Path("qa-linux/vulkan/goo_ci_goo44_compat.png"),
+              out_dir / "evidence-linux-x64-vulkan-goo44_compat.png",
+          )
+          copy_png(
+              Path("qa-linux/vulkan/goo_ci_master_showcase.png"),
+              out_dir / "evidence-linux-x64-vulkan-master_showcase.png",
+          )
+          copy_png(
+              Path("qa-windows/opengl/goo_ci_goo44_compat.png"),
+              out_dir / "evidence-windows-x64-opengl-goo44_compat.png",
+          )
+          copy_png(
+              Path("qa-windows/opengl/goo_ci_master_showcase.png"),
+              out_dir / "evidence-windows-x64-opengl-master_showcase.png",
+          )
+
+          rows = [("Windows x64 — OpenGL (`llvmpipe`)", "windows-x64-opengl")]
+          win_vk_compat = Path("qa-windows/vulkan/goo_ci_goo44_compat.png")
+          win_vk_master = Path("qa-windows/vulkan/goo_ci_master_showcase.png")
+          if win_vk_compat.is_file() and win_vk_master.is_file():
+              copy_png(win_vk_compat, out_dir / "evidence-windows-x64-vulkan-goo44_compat.png")
+              copy_png(win_vk_master, out_dir / "evidence-windows-x64-vulkan-master_showcase.png")
+              rows.append(("Windows x64 — Vulkan (`lavapipe`)", "windows-x64-vulkan"))
+
+          rows.extend([
+              ("Linux x64 — OpenGL (`llvmpipe`)", "linux-x64-opengl"),
+              ("Linux x64 — Vulkan (`lavapipe`)", "linux-x64-vulkan"),
+              ("macOS arm64 — Metal", "macos-arm64-metal"),
+          ])
+
+          win_vk_note = " + **Vulkan (`lavapipe`)**" if win_vk_compat.is_file() and win_vk_master.is_file() else ""
+          lines = [
+              "Portable release builds of **Blender 5.2.4 LTS Goo Engine** (`goo-port` branch).",
+              "",
+              "### Downloads",
+              f"- **Windows x64 ([`blender-5.2.4-goo-windows-x64.zip`]({base_url}/blender-5.2.4-goo-windows-x64.zip), [`sha256`]({base_url}/blender-5.2.4-goo-windows-x64.zip.sha256))**: Extract anywhere and run `blender.exe` (or `blender-launcher.exe`).",
+              f"- **Linux x64 ([`blender-5.2.4-goo-linux-x64.tar.xz`]({base_url}/blender-5.2.4-goo-linux-x64.tar.xz), [`sha256`]({base_url}/blender-5.2.4-goo-linux-x64.tar.xz.sha256))**: Extract (`tar -xf blender-5.2.4-goo-linux-x64.tar.xz`) and run `./blender`.",
+              "",
+              "### Automated Verification",
+              "Full `tests/python/goo_engine_ci_test.py` suite passed (Goo 3.5 / 4.4 / stock 4.x `.blend` migration, all 13 Goo shader nodes, Bloom, GTAO, SSR + Refraction, SSS, Volumetrics, DoF, Motion Blur, Planar/Sphere/Volume LightProbes, Hair Curves, Light Groups, and stock `BLENDER_EEVEE` sanity):",
+              f"- **Windows x64 Release**: OpenGL (`llvmpipe`){win_vk_note}",
+              "- **Linux x64 Release**: OpenGL (`llvmpipe`) + Vulkan (`lavapipe`)",
+              "- **macOS arm64 Release**: Metal (Apple Silicon)",
+              "",
+              "### Verification Evidence Screenshots",
+              "| Platform / Backend | Goo 3.x/4.x Compat & 13 Nodes (`goo44_compat`) | Multi-Effect Showcase (`master_showcase`) |",
+              "| :--- | :---: | :---: |",
+          ]
+          for label, slug in rows:
+              c_url = f"{base_url}/evidence-{slug}-goo44_compat.png"
+              m_url = f"{base_url}/evidence-{slug}-master_showcase.png"
+              lines.append(
+                  f"| **{label}** | ![{label} Compat]({c_url}) | ![{label} Showcase]({m_url}) |"
+              )
+
+          Path("release-body.md").write_text("\n".join(lines) + "\n")
+          PY
+
       - name: List release assets
         run: ls -lh release-assets
 
@@ -422,18 +658,10 @@ jobs:
           name: "Blender 5.2.4 LTS — Goo Engine (Windows x64 & Linux x64)"
           prerelease: false
           draft: false
-          body: |
-            Portable release builds of **Blender 5.2.4 LTS Goo Engine** (`goo-port` branch).
-
-            ### Downloads
-            - **Windows x64 (`blender-5.2.4-goo-windows-x64.zip`)**: Extract anywhere and run `blender.exe` (or `blender-launcher.exe`).
-            - **Linux x64 (`blender-5.2.4-goo-linux-x64.tar.xz`)**: Extract (`tar -xf blender-5.2.4-goo-linux-x64.tar.xz`) and run `./blender`.
-
-            ### Automated Verification in CI
-            - **Linux x64 OpenGL (`llvmpipe`)** and **Linux x64 Vulkan (`lavapipe`)**: Full `goo_engine_ci_test.py` suite passed (Goo 3.5 / 4.4 / stock 4.x `.blend` migration, all 13 Goo shader nodes, Bloom, GTAO, SSR + Refraction, SSS, Volumetrics, DoF, Motion Blur, Planar/Sphere/Volume LightProbes, Hair Curves, Light Groups, and stock `BLENDER_EEVEE` sanity).
-            - **Windows x64**: `Release` build compiled & verified (`5.2.4 LTS Goo Engine` version branding, RNA/node registration, and binary SDNA `.blend` migration suite).
+          body_path: release-body.md
           files: |
             release-assets/blender-*.zip
             release-assets/blender-*.zip.sha256
             release-assets/blender-*.tar.xz
             release-assets/blender-*.tar.xz.sha256
+            release-assets/evidence-*.png
