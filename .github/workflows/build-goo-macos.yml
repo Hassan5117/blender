@@ -32,14 +32,16 @@ jobs:
     steps:
       - name: Select Xcode 16+ & free runner disk space
         run: |
-          set -euo pipefail
-          test "$(uname -m)" = "arm64"
-          df -h
+          set -o pipefail
+          {
+            set -euo pipefail
+            test "$(uname -m)" = "arm64"
+            df -h
 
-          CUR_XC_VER="$(xcodebuild -version 2>/dev/null | awk '/Xcode/{print $2}' || echo 0)"
-          CUR_XC_MAJ="${CUR_XC_VER%%.*}"
-          if [ -z "$CUR_XC_MAJ" ] || [ "$CUR_XC_MAJ" -lt 16 ]; then
-            BEST_XC="$(python3 - <<'PY'
+            CUR_XC_VER="$(xcodebuild -version 2>/dev/null | awk '/Xcode/{print $2}' || true)"
+            CUR_XC_MAJ="${CUR_XC_VER%%.*}"
+            if [ -z "$CUR_XC_MAJ" ] || ! [ "$CUR_XC_MAJ" -ge 16 ] 2>/dev/null; then
+              BEST_XC="$(python3 - <<'PY'
           import glob, plistlib, os
           best = None
           best_ver = (0,)
@@ -59,42 +61,52 @@ jobs:
               print(best)
           PY
           )"
-            test -n "$BEST_XC"
-            sudo xcode-select -s "$BEST_XC/Contents/Developer"
-          fi
-          xcodebuild -version
-
-          ACTIVE_XCODE="$(cd "$(xcode-select -p)/../.." && pwd -P)"
-          echo "Active Xcode: $ACTIVE_XCODE"
-
-          xcrun simctl delete all || true
-          sudo rm -rf /Library/Developer/CoreSimulator ~/Library/Developer/CoreSimulator
-          sudo rm -rf /Users/runner/hostedtoolcache/CodeQL /usr/local/share/dotnet
-          for xc in /Applications/Xcode_*.app; do
-            [ -e "$xc" ] || continue
-            [ -L "$xc" ] && continue
-            XC_REAL="$(cd "$xc" && pwd -P)"
-            if [ "$XC_REAL" != "$ACTIVE_XCODE" ]; then
-              echo "Removing unused Xcode: $xc"
-              sudo rm -rf "$xc"
+              test -n "$BEST_XC"
+              sudo xcode-select -s "$BEST_XC/Contents/Developer"
+              sudo xcodebuild -license accept || true
             fi
-          done
-          df -h
+            xcodebuild -version
+
+            FREE_GB="$(df -g / | awk 'NR==2 {print $4}')"
+            echo "Initial free disk on /: ${FREE_GB} GiB"
+            if [ "${FREE_GB:-0}" -lt 28 ]; then
+              echo "Free space < 28 GiB; removing simulator devices/runtimes and unused caches..."
+              xcrun simctl shutdown all || true
+              xcrun simctl delete all || true
+              sudo xcrun simctl runtime delete all || true
+              sudo rm -rf ~/Library/Developer/CoreSimulator /Users/runner/hostedtoolcache/CodeQL /usr/local/share/dotnet || true
+            fi
+            df -h
+            FINAL_FREE_GB="$(df -g / | awk 'NR==2 {print $4}')"
+            XC_LINE="$(xcodebuild -version | tr '\n' ' ')"
+            echo "::notice title=macOS Runner Env::${XC_LINE} | Free=${FINAL_FREE_GB}GiB"
+          } 2>&1 | tee "$RUNNER_TEMP/setup-macos.log" || {
+            MSG="$(tail -n 30 "$RUNNER_TEMP/setup-macos.log" | python3 -c 'import sys; s=sys.stdin.read()[-3500:]; print(s.replace("%","%25").replace("\r","%0D").replace("\n","%0A"), end="")')"
+            echo "::error title=Select Xcode & free disk::$MSG"
+            exit 1
+          }
 
       - name: Install macOS build tools (git-lfs, cmake, ninja, ccache)
         run: |
-          set -euo pipefail
-          export HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1
-          MISSING=""
-          command -v git-lfs >/dev/null 2>&1 || MISSING="$MISSING git-lfs"
-          command -v cmake >/dev/null 2>&1 || MISSING="$MISSING cmake"
-          command -v ninja >/dev/null 2>&1 || MISSING="$MISSING ninja"
-          command -v ccache >/dev/null 2>&1 || MISSING="$MISSING ccache"
-          if [ -n "$MISSING" ]; then
-            brew install $MISSING
-          fi
-          cmake --version
-          ninja --version
+          set -o pipefail
+          {
+            set -euo pipefail
+            export HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1
+            MISSING=""
+            command -v git-lfs >/dev/null 2>&1 || MISSING="$MISSING git-lfs"
+            command -v cmake >/dev/null 2>&1 || MISSING="$MISSING cmake"
+            command -v ninja >/dev/null 2>&1 || MISSING="$MISSING ninja"
+            command -v ccache >/dev/null 2>&1 || MISSING="$MISSING ccache"
+            if [ -n "$MISSING" ]; then
+              brew install $MISSING
+            fi
+            cmake --version
+            ninja --version
+          } 2>&1 | tee "$RUNNER_TEMP/tools-macos.log" || {
+            MSG="$(tail -n 30 "$RUNNER_TEMP/tools-macos.log" | python3 -c 'import sys; s=sys.stdin.read()[-3500:]; print(s.replace("%","%25").replace("\r","%0D").replace("\n","%0A"), end="")')"
+            echo "::error title=Install macOS build tools::$MSG"
+            exit 1
+          }
 
       - name: Checkout Blender Goo Engine source
         uses: actions/checkout@v4
@@ -105,21 +117,28 @@ jobs:
 
       - name: Pull bundled LFS assets and precompiled lib/macos_arm64
         run: |
-          set -euo pipefail
-          git lfs install --skip-repo
-          git config lfs.url https://projects.blender.org/blender/blender.git/info/lfs
-          git lfs pull --exclude="tests/**"
-          STARTUP_SIZE="$(wc -c < release/datafiles/startup.blend | tr -d ' ')"
-          echo "release/datafiles/startup.blend size: $STARTUP_SIZE bytes"
-          test "$STARTUP_SIZE" -gt 1024
-          rm -rf .git/lfs
+          set -o pipefail
+          {
+            set -euo pipefail
+            git lfs install --skip-repo
+            git config lfs.url https://projects.blender.org/blender/blender.git/info/lfs
+            git lfs pull --exclude="tests/**"
+            STARTUP_SIZE="$(wc -c < release/datafiles/startup.blend | tr -d ' ')"
+            echo "release/datafiles/startup.blend size: $STARTUP_SIZE bytes"
+            test "$STARTUP_SIZE" -gt 1024
+            rm -rf .git/lfs
 
-          git config --local submodule.lib/macos_arm64.update checkout
-          GIT_LFS_SKIP_SMUDGE=1 git submodule update --init --depth 1 --progress lib/macos_arm64
-          git -C lib/macos_arm64 lfs pull
-          rm -rf lib/macos_arm64/.git/lfs .git/modules/lib/macos_arm64/lfs
-          test -e lib/macos_arm64/.git
-          df -h
+            git config --local submodule.lib/macos_arm64.update checkout
+            GIT_LFS_SKIP_SMUDGE=1 git submodule update --init --depth 1 --progress lib/macos_arm64
+            git -C lib/macos_arm64 lfs pull
+            rm -rf lib/macos_arm64/.git/lfs .git/modules/lib/macos_arm64/lfs
+            test -e lib/macos_arm64/.git
+            df -h
+          } 2>&1 | tee "$RUNNER_TEMP/lfs-macos.log" || {
+            MSG="$(tail -n 30 "$RUNNER_TEMP/lfs-macos.log" | python3 -c 'import sys; s=sys.stdin.read()[-3500:]; print(s.replace("%","%25").replace("\r","%0D").replace("\n","%0A"), end="")')"
+            echo "::error title=Pull macOS LFS & lib::$MSG"
+            exit 1
+          }
 
       - name: Restore macOS ccache
         id: ccache-restore
@@ -167,11 +186,13 @@ jobs:
 
       - name: Ad-hoc sign Blender.app & verify Goo Engine
         run: |
-          set -euo pipefail
-          APP="$RUNNER_TEMP/pkg/Blender.app"
-          test -d "$APP"
+          set -o pipefail
+          {
+            set -euo pipefail
+            APP="$RUNNER_TEMP/pkg/Blender.app"
+            test -d "$APP"
 
-          APP="$APP" python3 - <<'PY'
+            APP="$APP" python3 - <<'PY'
           import os
           import struct
           import subprocess
@@ -229,50 +250,58 @@ jobs:
           ])
           PY
 
-          codesign --verify --deep --strict --verbose=2 "$APP"
+            codesign --verify --deep --strict --verbose=2 "$APP"
 
-          VER_OUT="$("$APP/Contents/MacOS/Blender" --version)"
-          echo "$VER_OUT"
-          echo "$VER_OUT" | grep -q "5.2.4 LTS Goo Engine"
+            VER_OUT="$("$APP/Contents/MacOS/Blender" --version)"
+            echo "$VER_OUT"
+            echo "$VER_OUT" | grep -q "5.2.4 LTS Goo Engine"
 
-          if ! GOO_SKIP_GPU_RENDER=1 \
-            "$APP/Contents/MacOS/Blender" --background --factory-startup \
-            --python-exit-code 1 --python "$GITHUB_WORKSPACE/tests/python/goo_engine_ci_test.py" 2>&1 | tee "$RUNNER_TEMP/qa-macos-migration.log"; then
-            MSG="$(tail -n 30 "$RUNNER_TEMP/qa-macos-migration.log" | python3 -c 'import sys; s=sys.stdin.read()[-3500:]; print(s.replace("%","%25").replace("\r","%0D").replace("\n","%0A"), end="")')"
-            echo "::error title=Verify macOS Goo migration QA::$MSG"
+            GOO_SKIP_GPU_RENDER=1 \
+              "$APP/Contents/MacOS/Blender" --background --factory-startup \
+              --python-exit-code 1 --python "$GITHUB_WORKSPACE/tests/python/goo_engine_ci_test.py"
+
+            mkdir -p "$RUNNER_TEMP/qa-macos/metal" "$RUNNER_TEMP/dist"
+            set +e
+            GOO_TEST_OUT_DIR="$RUNNER_TEMP/qa-macos/metal" \
+              "$APP/Contents/MacOS/Blender" --background --factory-startup \
+              --python-exit-code 1 --python "$GITHUB_WORKSPACE/tests/python/goo_engine_ci_test.py"
+            METAL_RC=$?
+            set -e
+            if [ "$METAL_RC" -eq 0 ] \
+              && [ -f "$RUNNER_TEMP/qa-macos/metal/goo_ci_goo44_compat.png" ] \
+              && [ -f "$RUNNER_TEMP/qa-macos/metal/goo_ci_master_showcase.png" ]; then
+              cp "$RUNNER_TEMP/qa-macos/metal/goo_ci_goo44_compat.png" "$RUNNER_TEMP/dist/evidence-macos-arm64-metal-goo44_compat.png"
+              cp "$RUNNER_TEMP/qa-macos/metal/goo_ci_master_showcase.png" "$RUNNER_TEMP/dist/evidence-macos-arm64-metal-master_showcase.png"
+            else
+              echo "::warning title=macOS CI Metal GPU render::Headless paravirtual Metal render exited $METAL_RC; keeping verified Apple Silicon hardware Metal screenshots on release."
+            fi
+          } 2>&1 | tee "$RUNNER_TEMP/verify-macos.log" || {
+            MSG="$(tail -n 30 "$RUNNER_TEMP/verify-macos.log" | python3 -c 'import sys; s=sys.stdin.read()[-3500:]; print(s.replace("%","%25").replace("\r","%0D").replace("\n","%0A"), end="")')"
+            echo "::error title=Sign & verify macOS Blender.app::$MSG"
             exit 1
-          fi
-
-          mkdir -p "$RUNNER_TEMP/qa-macos/metal" "$RUNNER_TEMP/dist"
-          set +e
-          GOO_TEST_OUT_DIR="$RUNNER_TEMP/qa-macos/metal" \
-            "$APP/Contents/MacOS/Blender" --background --factory-startup \
-            --python-exit-code 1 --python "$GITHUB_WORKSPACE/tests/python/goo_engine_ci_test.py" 2>&1 | tee "$RUNNER_TEMP/qa-macos-metal.log"
-          METAL_RC=$?
-          set -e
-          if [ "$METAL_RC" -eq 0 ] \
-            && [ -f "$RUNNER_TEMP/qa-macos/metal/goo_ci_goo44_compat.png" ] \
-            && [ -f "$RUNNER_TEMP/qa-macos/metal/goo_ci_master_showcase.png" ]; then
-            cp "$RUNNER_TEMP/qa-macos/metal/goo_ci_goo44_compat.png" "$RUNNER_TEMP/dist/evidence-macos-arm64-metal-goo44_compat.png"
-            cp "$RUNNER_TEMP/qa-macos/metal/goo_ci_master_showcase.png" "$RUNNER_TEMP/dist/evidence-macos-arm64-metal-master_showcase.png"
-          else
-            echo "::warning title=macOS CI Metal GPU render::Headless paravirtual Metal render exited $METAL_RC; keeping verified Apple Silicon hardware Metal screenshots on release."
-          fi
+          }
 
       - name: Package macOS portable .dmg archive
         run: |
-          set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/dmg-staging" "$RUNNER_TEMP/dist"
-          mv "$RUNNER_TEMP/pkg/Blender.app" "$RUNNER_TEMP/dmg-staging/Blender.app"
-          ln -s /Applications "$RUNNER_TEMP/dmg-staging/Applications"
-          DMG_NAME="blender-${ARCHIVE_VERSION}-macos-arm64.dmg"
-          hdiutil create -volname "Blender 5.2.4 Goo Engine" \
-            -srcfolder "$RUNNER_TEMP/dmg-staging" \
-            -ov -format UDZO \
-            "$RUNNER_TEMP/dist/$DMG_NAME"
-          (cd "$RUNNER_TEMP/dist" && shasum -a 256 "$DMG_NAME" > "$DMG_NAME.sha256")
-          rm -rf "$RUNNER_TEMP/dmg-staging" "$RUNNER_TEMP/pkg"
-          ls -lh "$RUNNER_TEMP/dist"
+          set -o pipefail
+          {
+            set -euo pipefail
+            mkdir -p "$RUNNER_TEMP/dmg-staging" "$RUNNER_TEMP/dist"
+            mv "$RUNNER_TEMP/pkg/Blender.app" "$RUNNER_TEMP/dmg-staging/Blender.app"
+            ln -s /Applications "$RUNNER_TEMP/dmg-staging/Applications"
+            DMG_NAME="blender-${ARCHIVE_VERSION}-macos-arm64.dmg"
+            hdiutil create -volname "Blender 5.2.4 Goo Engine" \
+              -srcfolder "$RUNNER_TEMP/dmg-staging" \
+              -ov -format UDZO \
+              "$RUNNER_TEMP/dist/$DMG_NAME"
+            (cd "$RUNNER_TEMP/dist" && shasum -a 256 "$DMG_NAME" > "$DMG_NAME.sha256")
+            rm -rf "$RUNNER_TEMP/dmg-staging" "$RUNNER_TEMP/pkg"
+            ls -lh "$RUNNER_TEMP/dist"
+          } 2>&1 | tee "$RUNNER_TEMP/dmg-macos.log" || {
+            MSG="$(tail -n 30 "$RUNNER_TEMP/dmg-macos.log" | python3 -c 'import sys; s=sys.stdin.read()[-3500:]; print(s.replace("%","%25").replace("\r","%0D").replace("\n","%0A"), end="")')"
+            echo "::error title=Package macOS DMG::$MSG"
+            exit 1
+          }
 
       - name: Upload macOS release archive artifact
         uses: actions/upload-artifact@v4
@@ -288,21 +317,23 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_TAG: ${{ inputs.release_tag || 'v5.2.4-goo' }}
         run: |
-          set -euo pipefail
-          gh release upload "$RELEASE_TAG" \
-            "$RUNNER_TEMP"/dist/blender-*-macos-arm64.dmg \
-            "$RUNNER_TEMP"/dist/blender-*-macos-arm64.dmg.sha256 \
-            --clobber --repo "${{ github.repository }}"
-
-          if [ -f "$RUNNER_TEMP/dist/evidence-macos-arm64-metal-goo44_compat.png" ] \
-            && [ -f "$RUNNER_TEMP/dist/evidence-macos-arm64-metal-master_showcase.png" ]; then
+          set -o pipefail
+          {
+            set -euo pipefail
             gh release upload "$RELEASE_TAG" \
-              "$RUNNER_TEMP"/dist/evidence-macos-*.png \
+              "$RUNNER_TEMP"/dist/blender-*-macos-arm64.dmg \
+              "$RUNNER_TEMP"/dist/blender-*-macos-arm64.dmg.sha256 \
               --clobber --repo "${{ github.repository }}"
-          fi
 
-          gh release view "$RELEASE_TAG" --json assets --repo "${{ github.repository }}" > "$RUNNER_TEMP/release-assets.json"
-          python3 - <<'PY'
+            if [ -f "$RUNNER_TEMP/dist/evidence-macos-arm64-metal-goo44_compat.png" ] \
+              && [ -f "$RUNNER_TEMP/dist/evidence-macos-arm64-metal-master_showcase.png" ]; then
+              gh release upload "$RELEASE_TAG" \
+                "$RUNNER_TEMP"/dist/evidence-macos-*.png \
+                --clobber --repo "${{ github.repository }}"
+            fi
+
+            gh release view "$RELEASE_TAG" --json assets --repo "${{ github.repository }}" > "$RUNNER_TEMP/release-assets.json"
+            python3 - <<'PY'
           import json
           import os
           from pathlib import Path
@@ -356,7 +387,12 @@ jobs:
           Path("release-body.md").write_text("\n".join(lines) + "\n")
           PY
 
-          gh release edit "$RELEASE_TAG" \
-            --title "Blender 5.2.4 LTS — Goo Engine (Windows x64, Linux x64 & macOS arm64)" \
-            --notes-file release-body.md \
-            --repo "${{ github.repository }}"
+            gh release edit "$RELEASE_TAG" \
+              --title "Blender 5.2.4 LTS — Goo Engine (Windows x64, Linux x64 & macOS arm64)" \
+              --notes-file release-body.md \
+              --repo "${{ github.repository }}"
+          } 2>&1 | tee "$RUNNER_TEMP/publish-macos.log" || {
+            MSG="$(tail -n 30 "$RUNNER_TEMP/publish-macos.log" | python3 -c 'import sys; s=sys.stdin.read()[-3500:]; print(s.replace("%","%25").replace("\r","%0D").replace("\n","%0A"), end="")')"
+            echo "::error title=Publish macOS DMG::$MSG"
+            exit 1
+          }
