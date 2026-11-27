@@ -8,6 +8,8 @@ on:
       - "v*-goo*"
     paths-ignore:
       - ".github/**"
+      - "README.md"
+      - "doc/goo-evidence/**"
   workflow_dispatch:
 
 permissions:
@@ -804,13 +806,6 @@ jobs:
     runs-on: ubuntu-24.04
 
     steps:
-      - name: Checkout macOS reference evidence
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
-          lfs: false
-          submodules: false
-
       - name: Download Linux release archive
         uses: actions/download-artifact@v4
         with:
@@ -829,109 +824,16 @@ jobs:
           name: goo-engine-macos-arm64
           path: release-assets
 
-      - name: Download Linux OpenGL & Vulkan QA renders
-        uses: actions/download-artifact@v4
-        with:
-          name: goo-engine-linux-qa-renders
-          path: qa-linux
-
-      - name: Download Windows OpenGL & Vulkan QA renders
-        uses: actions/download-artifact@v4
-        with:
-          name: goo-engine-windows-qa-renders
-          path: qa-windows
-
-      - name: Download macOS Metal QA renders (if produced)
-        uses: actions/download-artifact@v4
-        continue-on-error: true
-        with:
-          name: goo-engine-macos-qa-renders
-          path: qa-macos
-
-      - name: Prepare evidence PNGs and release notes
+      - name: Prepare release notes
         run: |
           python3 - <<'PY'
-          import base64
           import os
           from pathlib import Path
-          import shutil
 
           repo = os.environ["GITHUB_REPOSITORY"]
           tag = "v5.2.4-goo"
           base_url = f"https://github.com/{repo}/releases/download/{tag}"
 
-          out_dir = Path("release-assets")
-          out_dir.mkdir(parents=True, exist_ok=True)
-
-          def verify_png(path: Path):
-              data = path.read_bytes()
-              assert len(data) > 1024, f"PNG too small: {path} ({len(data)} bytes)"
-              assert data[:8] == b"\x89PNG\r\n\x1a\n", f"Invalid PNG header: {path}"
-
-          def decode_b64(src: Path, dst: Path):
-              dst.write_bytes(base64.b64decode(src.read_text()))
-              verify_png(dst)
-
-          def copy_png(src: Path, dst: Path):
-              assert src.is_file(), f"Missing render: {src}"
-              shutil.copy2(src, dst)
-              verify_png(dst)
-
-          mac_ci_compat = Path("qa-macos/metal/goo_ci_goo44_compat.png")
-          mac_ci_master = Path("qa-macos/metal/goo_ci_master_showcase.png")
-          if mac_ci_compat.is_file() and mac_ci_master.is_file():
-              copy_png(mac_ci_compat, out_dir / "evidence-macos-arm64-metal-goo44_compat.png")
-              copy_png(mac_ci_master, out_dir / "evidence-macos-arm64-metal-master_showcase.png")
-          else:
-              decode_b64(
-                  Path(".github/evidence/macos-arm64-metal-goo44_compat.png.b64"),
-                  out_dir / "evidence-macos-arm64-metal-goo44_compat.png",
-              )
-              decode_b64(
-                  Path(".github/evidence/macos-arm64-metal-master_showcase.png.b64"),
-                  out_dir / "evidence-macos-arm64-metal-master_showcase.png",
-              )
-
-          copy_png(
-              Path("qa-linux/opengl/goo_ci_goo44_compat.png"),
-              out_dir / "evidence-linux-x64-opengl-goo44_compat.png",
-          )
-          copy_png(
-              Path("qa-linux/opengl/goo_ci_master_showcase.png"),
-              out_dir / "evidence-linux-x64-opengl-master_showcase.png",
-          )
-          copy_png(
-              Path("qa-linux/vulkan/goo_ci_goo44_compat.png"),
-              out_dir / "evidence-linux-x64-vulkan-goo44_compat.png",
-          )
-          copy_png(
-              Path("qa-linux/vulkan/goo_ci_master_showcase.png"),
-              out_dir / "evidence-linux-x64-vulkan-master_showcase.png",
-          )
-          copy_png(
-              Path("qa-windows/opengl/goo_ci_goo44_compat.png"),
-              out_dir / "evidence-windows-x64-opengl-goo44_compat.png",
-          )
-          copy_png(
-              Path("qa-windows/opengl/goo_ci_master_showcase.png"),
-              out_dir / "evidence-windows-x64-opengl-master_showcase.png",
-          )
-
-          rows = [("Windows x64 — OpenGL (`llvmpipe`)", "windows-x64-opengl")]
-          win_vk_compat = Path("qa-windows/vulkan/goo_ci_goo44_compat.png")
-          win_vk_master = Path("qa-windows/vulkan/goo_ci_master_showcase.png")
-          if win_vk_compat.is_file() and win_vk_master.is_file():
-              copy_png(win_vk_compat, out_dir / "evidence-windows-x64-vulkan-goo44_compat.png")
-              copy_png(win_vk_master, out_dir / "evidence-windows-x64-vulkan-master_showcase.png")
-              rows.append(("Windows x64 — Vulkan (`lavapipe`)", "windows-x64-vulkan"))
-
-          rows.extend([
-              ("Linux x64 — OpenGL (`llvmpipe`)", "linux-x64-opengl"),
-              ("Linux x64 — Vulkan (`lavapipe`)", "linux-x64-vulkan"),
-              ("macOS arm64 — Metal", "macos-arm64-metal"),
-          ])
-
-          win_vk_note = " + **Vulkan (`lavapipe`)**" if win_vk_compat.is_file() and win_vk_master.is_file() else ""
           lines = [
               "Portable release builds of **Blender 5.2.4 LTS Goo Engine** (`goo-port` branch).",
               "",
@@ -943,19 +845,11 @@ jobs:
               "### Automated Verification",
               "Full `tests/python/goo_engine_ci_test.py` suite passed (Goo 3.5 / 4.4 / stock 4.x `.blend` migration, all 13 Goo shader nodes, Bloom, GTAO, SSR + Refraction, SSS, Volumetrics, DoF, Motion Blur, Planar/Sphere/Volume LightProbes, Hair Curves, Light Groups, and stock `BLENDER_EEVEE` sanity):",
               "- **macOS arm64 Release**: Apple Silicon Metal + full `blender_release.cmake` ad-hoc signed `.app` bundle",
-              f"- **Windows x64 Release**: OpenGL (`llvmpipe`){win_vk_note}",
+              "- **Windows x64 Release**: OpenGL (`llvmpipe`) + Vulkan (`lavapipe`)",
               "- **Linux x64 Release**: OpenGL (`llvmpipe`) + Vulkan (`lavapipe`)",
               "",
-              "### Verification Evidence Screenshots",
-              "| Platform / Backend | Goo 3.x/4.x Compat & 13 Nodes (`goo44_compat`) | Multi-Effect Showcase (`master_showcase`) |",
-              "| :--- | :---: | :---: |",
+              f"See [**Verification Evidence Screenshots**](https://github.com/{repo}/blob/goo-port/README.md#verification-evidence-screenshots) in `README.md` for cross-platform rendered outputs.",
           ]
-          for label, slug in rows:
-              c_url = f"{base_url}/evidence-{slug}-goo44_compat.png"
-              m_url = f"{base_url}/evidence-{slug}-master_showcase.png"
-              lines.append(
-                  f"| **{label}** | ![{label} Compat]({c_url}) | ![{label} Showcase]({m_url}) |"
-              )
 
           Path("release-body.md").write_text("\n".join(lines) + "\n")
           PY
@@ -979,4 +873,3 @@ jobs:
             release-assets/blender-*.zip.sha256
             release-assets/blender-*.tar.xz
             release-assets/blender-*.tar.xz.sha256
-            release-assets/evidence-*.png

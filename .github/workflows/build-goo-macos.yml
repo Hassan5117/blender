@@ -1,11 +1,6 @@
 name: Build & Publish Goo Engine macOS arm64 Release
 
 on:
-  push:
-    branches:
-      - goo-port
-    paths:
-      - ".github/workflows/build-goo-macos.yml"
   workflow_dispatch:
     inputs:
       release_tag:
@@ -260,20 +255,16 @@ jobs:
               "$APP/Contents/MacOS/Blender" --background --factory-startup \
               --python-exit-code 1 --python "$GITHUB_WORKSPACE/tests/python/goo_engine_ci_test.py"
 
-            mkdir -p "$RUNNER_TEMP/qa-macos/metal" "$RUNNER_TEMP/dist"
+            mkdir -p "$RUNNER_TEMP/qa-macos/metal"
             set +e
             GOO_TEST_OUT_DIR="$RUNNER_TEMP/qa-macos/metal" \
               "$APP/Contents/MacOS/Blender" --background --factory-startup \
               --python-exit-code 1 --python "$GITHUB_WORKSPACE/tests/python/goo_engine_ci_test.py"
             METAL_RC=$?
             set -e
-            if [ "$METAL_RC" -eq 0 ] \
-              && [ -f "$RUNNER_TEMP/qa-macos/metal/goo_ci_goo44_compat.png" ] \
-              && [ -f "$RUNNER_TEMP/qa-macos/metal/goo_ci_master_showcase.png" ]; then
-              cp "$RUNNER_TEMP/qa-macos/metal/goo_ci_goo44_compat.png" "$RUNNER_TEMP/dist/evidence-macos-arm64-metal-goo44_compat.png"
-              cp "$RUNNER_TEMP/qa-macos/metal/goo_ci_master_showcase.png" "$RUNNER_TEMP/dist/evidence-macos-arm64-metal-master_showcase.png"
-            else
-              echo "::warning title=macOS CI Metal GPU render::Headless paravirtual Metal render exited $METAL_RC; keeping verified Apple Silicon hardware Metal screenshots on release."
+            if [ "$METAL_RC" -ne 0 ]; then
+              echo "::warning title=macOS CI Metal GPU render::Headless paravirtual Metal render exited $METAL_RC; removing partial macOS CI renders."
+              rm -rf "$RUNNER_TEMP/qa-macos/metal"
             fi
           } 2>&1 | tee "$RUNNER_TEMP/verify-macos.log" || {
             MSG="$(tail -n 30 "$RUNNER_TEMP/verify-macos.log" | python3 -c 'import sys; s=sys.stdin.read()[-3500:]; print(s.replace("%","%25").replace("\r","%0D").replace("\n","%0A"), end="")')"
@@ -312,6 +303,14 @@ jobs:
             ${{ runner.temp }}/dist/blender-*-macos-arm64.dmg.sha256
           if-no-files-found: error
 
+      - name: Upload macOS Metal QA renders
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: goo-engine-macos-qa-renders
+          path: ${{ runner.temp }}/qa-macos
+          if-no-files-found: ignore
+
       - name: Publish macOS DMG to GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -325,16 +324,7 @@ jobs:
               "$RUNNER_TEMP"/dist/blender-*-macos-arm64.dmg.sha256 \
               --clobber --repo "${{ github.repository }}"
 
-            if [ -f "$RUNNER_TEMP/dist/evidence-macos-arm64-metal-goo44_compat.png" ] \
-              && [ -f "$RUNNER_TEMP/dist/evidence-macos-arm64-metal-master_showcase.png" ]; then
-              gh release upload "$RELEASE_TAG" \
-                "$RUNNER_TEMP"/dist/evidence-macos-*.png \
-                --clobber --repo "${{ github.repository }}"
-            fi
-
-            gh release view "$RELEASE_TAG" --json assets --repo "${{ github.repository }}" > "$RUNNER_TEMP/release-assets.json"
             python3 - <<'PY'
-          import json
           import os
           from pathlib import Path
 
@@ -342,23 +332,6 @@ jobs:
           tag = os.environ["RELEASE_TAG"]
           base_url = f"https://github.com/{repo}/releases/download/{tag}"
 
-          rel = json.loads(Path(os.path.join(os.environ["RUNNER_TEMP"], "release-assets.json")).read_text())
-          asset_names = {a["name"] for a in rel.get("assets", [])}
-          has_win_vk = (
-              "evidence-windows-x64-vulkan-goo44_compat.png" in asset_names
-              and "evidence-windows-x64-vulkan-master_showcase.png" in asset_names
-          )
-
-          rows = [("Windows x64 — OpenGL (`llvmpipe`)", "windows-x64-opengl")]
-          if has_win_vk:
-              rows.append(("Windows x64 — Vulkan (`lavapipe`)", "windows-x64-vulkan"))
-          rows.extend([
-              ("Linux x64 — OpenGL (`llvmpipe`)", "linux-x64-opengl"),
-              ("Linux x64 — Vulkan (`lavapipe`)", "linux-x64-vulkan"),
-              ("macOS arm64 — Metal", "macos-arm64-metal"),
-          ])
-
-          win_vk_note = " + **Vulkan (`lavapipe`)**" if has_win_vk else ""
           lines = [
               "Portable release builds of **Blender 5.2.4 LTS Goo Engine** (`goo-port` branch).",
               "",
@@ -370,19 +343,11 @@ jobs:
               "### Automated Verification",
               "Full `tests/python/goo_engine_ci_test.py` suite passed (Goo 3.5 / 4.4 / stock 4.x `.blend` migration, all 13 Goo shader nodes, Bloom, GTAO, SSR + Refraction, SSS, Volumetrics, DoF, Motion Blur, Planar/Sphere/Volume LightProbes, Hair Curves, Light Groups, and stock `BLENDER_EEVEE` sanity):",
               "- **macOS arm64 Release**: Apple Silicon Metal + full `blender_release.cmake` ad-hoc signed `.app` bundle",
-              f"- **Windows x64 Release**: OpenGL (`llvmpipe`){win_vk_note}",
+              "- **Windows x64 Release**: OpenGL (`llvmpipe`) + Vulkan (`lavapipe`)",
               "- **Linux x64 Release**: OpenGL (`llvmpipe`) + Vulkan (`lavapipe`)",
               "",
-              "### Verification Evidence Screenshots",
-              "| Platform / Backend | Goo 3.x/4.x Compat & 13 Nodes (`goo44_compat`) | Multi-Effect Showcase (`master_showcase`) |",
-              "| :--- | :---: | :---: |",
+              f"See [**Verification Evidence Screenshots**](https://github.com/{repo}/blob/goo-port/README.md#verification-evidence-screenshots) in `README.md` for cross-platform rendered outputs.",
           ]
-          for label, slug in rows:
-              c_url = f"{base_url}/evidence-{slug}-goo44_compat.png"
-              m_url = f"{base_url}/evidence-{slug}-master_showcase.png"
-              lines.append(
-                  f"| **{label}** | ![{label} Compat]({c_url}) | ![{label} Showcase]({m_url}) |"
-              )
 
           Path("release-body.md").write_text("\n".join(lines) + "\n")
           PY
